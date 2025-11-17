@@ -38,7 +38,7 @@ const pageConfigService = {
       default_sort: Joi.object({
         field: Joi.string().required(),
         order: Joi.string().valid('ASC', 'DESC').default('ASC'),
-      }).optional(),
+      }).allow(null).optional(),
       page_size_default: Joi.number().integer().min(1).max(100).default(20),
     });
 

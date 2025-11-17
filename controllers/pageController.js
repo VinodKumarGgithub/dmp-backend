@@ -1,6 +1,7 @@
 const { success } = require('../utils/responseHandler');
 const { pageService } = require('../services/pageService');
 const { pageConfigService } = require('../services/pageConfigService');
+const { dbMetadataService } = require('../services/dbMetadataService');
 const { masterSequelize } = require('../config/db');
 const { fromCode } = require('../utils/errors');
 
@@ -114,6 +115,47 @@ module.exports = {
       // Send JSON data to frontend (frontend will convert to CSV)
       res.setHeader('Content-Type', 'application/json');
       res.json(success({ data }, 'Data fetched successfully for download'));
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // GET /api/pages/db/tables (needs tenant DB)
+  async getTables(req, res, next) {
+    try {
+      if (!req.db || !req.db.sequelize) {
+        return next(fromCode('TENANT_DB_NOT_AVAILABLE'));
+      }
+      const tables = await dbMetadataService.getTables(req.db.sequelize);
+      res.json(success(tables, 'Tables fetched successfully'));
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // GET /api/pages/db/tables/:tableName/columns (needs tenant DB)
+  async getTableColumns(req, res, next) {
+    try {
+      if (!req.db || !req.db.sequelize) {
+        return next(fromCode('TENANT_DB_NOT_AVAILABLE'));
+      }
+      const { tableName } = req.params;
+      const columns = await dbMetadataService.getTableColumns(req.db.sequelize, tableName);
+      res.json(success(columns, 'Table columns fetched successfully'));
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // GET /api/pages/db/tables/:tableName/indexes (needs tenant DB)
+  async getTableIndexes(req, res, next) {
+    try {
+      if (!req.db || !req.db.sequelize) {
+        return next(fromCode('TENANT_DB_NOT_AVAILABLE'));
+      }
+      const { tableName } = req.params;
+      const indexes = await dbMetadataService.getTableIndexes(req.db.sequelize, tableName);
+      res.json(success(indexes, 'Table indexes fetched successfully'));
     } catch (err) {
       next(err);
     }
