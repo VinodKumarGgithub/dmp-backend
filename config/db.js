@@ -5,6 +5,12 @@ const { DB_POOL } = require('./constants');
 function createSequelize(url) {
   const sequelize = new Sequelize(url, {
     logging: false,
+    dialectOptions: {
+      ssl: {
+        require: true,
+        rejectUnauthorized: false
+      }
+    },
     pool: { max: DB_POOL.MAX, min: DB_POOL.MIN, acquire: DB_POOL.ACQUIRE, idle: DB_POOL.IDLE }
   });
   return sequelize;
