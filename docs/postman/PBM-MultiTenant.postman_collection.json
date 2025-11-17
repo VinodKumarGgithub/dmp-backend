@@ -1,0 +1,347 @@
+{
+  "info": {
+    "name": "PBM Multi-Tenant API",
+    "description": "# PBM Multi-Tenant API — Usage in Postman\n\n## Import\n- Import this collection and select the \"PBM Multi-Tenant - Local\" environment.\n\n## Environment Variables\n- `base_url`: API base (default `http://localhost:4000`)\n- `tenantId`: Current tenant id (e.g., `tenant_001`)\n- `authToken`: Optional JWT (set only if auth is enabled)\n\n## Headers\n- `Content-Type: application/json` for JSON requests\n- `x-tenant-id: {{tenantId}}` for Prior Authorization endpoints\n- Optional when auth is enabled: `Authorization: Bearer {{authToken}}`\n\n## Quick Start\n1) Health\nGET `{{base_url}}/health`\n\n2) Create Tenant\nPOST `{{base_url}}/api/tenants`\nBody:\n```json\n{\n  \"id\": \"tenant_001\",\n  \"name\": \"Healthcare Provider A\",\n  \"dialect\": \"mysql\",\n  \"db_host\": \"localhost\",\n  \"db_port\": 3306,\n  \"db_user\": \"tenant_user\",\n  \"db_password\": \"secure_password\",\n  \"db_name\": \"tenant_db\",\n  \"status\": \"ACTIVE\",\n  \"description\": \"Primary healthcare provider tenant\"\n}\n```\n\n3) List Tenants\nGET `{{base_url}}/api/tenants`\n\n4) Get Tenant Stats\nGET `{{base_url}}/api/tenants/stats`\n\n5) Test Tenant Connection\nPOST `{{base_url}}/api/tenants/{{tenantId}}/test-connection`\n\n6) Create Prior-Auth Transaction\nPOST `{{base_url}}/api/prior-auth/txn`\nHeaders: `x-tenant-id: {{tenantId}}`\nBody:\n```json\n{\n  \"request_id\": \"REQ-001\",\n  \"version\": \"1.0\",\n  \"type\": \"PA\",\n  \"request\": {},\n  \"response\": {}\n}\n```\n\n7) Create Random Prior-Auth Transaction\nPOST `{{base_url}}/api/prior-auth/txn/random`\nHeaders: `x-tenant-id: {{tenantId}}`\n\n## Notes\n- Set `tenantId` to a valid onboarded tenant before calling Prior Auth endpoints.\n- If JWT auth is enabled in your deployment, set `authToken` and add the Authorization header at the collection or folder level.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_postman_id": "a2a1f5b4-2c2f-4b0c-9c1d-111111111111"
+  },
+  "item": [
+    {
+      "name": "Auth",
+      "description": "Authenticate as admin to obtain a JWT and populate `authToken` environment variable.",
+      "item": [
+        {
+          "name": "Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"admin\",\n  \"password\": \"<password>\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/auth/login",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "login"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "let json = {};",
+                  "try { json = pm.response.json(); } catch (e) { json = {}; }",
+                  "if (json && json.success && json.data && json.data.token) {",
+                  "  pm.environment.set('authToken', json.data.token);",
+                  "  pm.test('Saved auth token to environment', function () { pm.expect(true).to.be.true; });",
+                  "} else {",
+                  "  pm.test('Token not found in response', function () { pm.expect(false).to.be.true; });",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Health",
+      "description": "Basic liveness check for the API.\n\nExample:\n```bash\ncurl -X GET \"{{base_url}}/health\"\n```",
+      "item": [
+        {
+          "name": "GET Health",
+          "description": "Returns a simple health payload.\n\nExample:\n```bash\ncurl -X GET \"{{base_url}}/health\"\n```",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/health",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "health"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Tenant Registry",
+      "description": "CRUD for onboarding and managing tenants (no `x-tenant-id` required).\n\nBase: `{{base_url}}/api/tenants`\n\nCommon flow:\n1) Create tenant\n2) Test connection\n3) List / Update / Delete",
+      "item": [
+        {
+          "name": "Create Tenant",
+          "description": "Create a new tenant.\n\nExample:\n```bash\ncurl -X POST \"{{base_url}}/api/tenants\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\n  \"id\": \"tenant_001\",\n  \"name\": \"Healthcare Provider A\",\n  \"dialect\": \"mysql\",\n  \"db_host\": \"localhost\",\n  \"db_port\": 3306,\n  \"db_user\": \"tenant_user\",\n  \"db_password\": \"secure_password\",\n  \"db_name\": \"tenant_db\",\n  \"status\": \"ACTIVE\"\n}'\n```",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{authToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"tenant_001\",\n  \"name\": \"Healthcare Provider A\",\n  \"dialect\": \"mysql\",\n  \"db_host\": \"localhost\",\n  \"db_port\": 3306,\n  \"db_user\": \"tenant_user\",\n  \"db_password\": \"secure_password\",\n  \"db_name\": \"tenant_db\",\n  \"status\": \"ACTIVE\",\n  \"description\": \"Primary healthcare provider tenant\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/tenants",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "tenants"
+              ]
+            }
+          }
+        },
+        {
+          "name": "List Tenants",
+          "description": "List all tenants (supports filters).\n\nExamples:\n```bash\ncurl -X GET \"{{base_url}}/api/tenants\"\ncurl -X GET \"{{base_url}}/api/tenants?status=ACTIVE\"\n```",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{authToken}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/tenants",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "tenants"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Tenant Stats",
+          "description": "Fetch summary statistics about tenants.\n\nExample:\n```bash\ncurl -X GET \"{{base_url}}/api/tenants/stats\"\n```",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{authToken}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/tenants/stats",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "tenants",
+                "stats"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Tenant By ID",
+          "description": "Get details of a specific tenant by id.\n\nExample:\n```bash\ncurl -X GET \"{{base_url}}/api/tenants/{{tenantId}}\"\n```",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/tenants/{{tenantId}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "tenants",
+                "{{tenantId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Update Tenant",
+          "description": "Update selected fields of a tenant.\n\nExample:\n```bash\ncurl -X PUT \"{{base_url}}/api/tenants/{{tenantId}}\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\n  \"dialect\": \"mssql\",\n  \"status\": \"SUSPENDED\"\n}'\n```",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{authToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"dialect\": \"mssql\",\n  \"status\": \"SUSPENDED\",\n  \"description\": \"Tenant temporarily suspended for maintenance\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/tenants/{{tenantId}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "tenants",
+                "{{tenantId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Delete Tenant",
+          "description": "Delete a tenant.\n\nExample:\n```bash\ncurl -X DELETE \"{{base_url}}/api/tenants/{{tenantId}}\"\n```",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{authToken}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/tenants/{{tenantId}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "tenants",
+                "{{tenantId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Bulk Create Tenants",
+          "description": "Create multiple tenants in one request.\n\nExample:\n```bash\ncurl -X POST \"{{base_url}}/api/tenants/bulk\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\n  \"tenants\": [{ \"id\": \"tenant_003\", \"name\": \"Provider B\", \"dialect\": \"mysql\", \"db_host\": \"localhost\", \"db_port\": 3306, \"db_user\": \"user_b\", \"db_password\": \"pass_b\", \"db_name\": \"db_b\" }]\n}'\n```",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{authToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tenants\": [\n    {\n      \"id\": \"tenant_003\",\n      \"name\": \"Provider B\",\n      \"dialect\": \"mysql\",\n      \"db_host\": \"localhost\",\n      \"db_port\": 3306,\n      \"db_user\": \"user_b\",\n      \"db_password\": \"pass_b\",\n      \"db_name\": \"db_b\"\n    },\n    {\n      \"id\": \"tenant_004\",\n      \"name\": \"Provider C\",\n      \"dialect\": \"mssql\",\n      \"db_host\": \"localhost\",\n      \"db_port\": 3306,\n      \"db_user\": \"user_c\",\n      \"db_password\": \"pass_c\",\n      \"db_name\": \"db_c\"\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/tenants/bulk",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "tenants",
+                "bulk"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Test Tenant Connection",
+          "description": "Verify DB connectivity for a tenant.\n\nExample:\n```bash\ncurl -X POST \"{{base_url}}/api/tenants/{{tenantId}}/test-connection\"\n```",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/tenants/{{tenantId}}/test-connection",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "tenants",
+                "{{tenantId}}",
+                "test-connection"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Prior Authorization",
+      "description": "Tenant-scoped endpoints. Always include header `x-tenant-id: {{tenantId}}`.\n\nBase: `{{base_url}}/api/prior-auth`\n\nCommon flow:\n1) Configure prior-auth (optional)\n2) Create transactions",
+      "item": [
+        {
+          "name": "Get Transactions",
+          "description": "List prior-auth transactions for the tenant.\n\nExample:\n```bash\ncurl -X GET \"{{base_url}}/api/prior-auth/txn\" \\\n  -H \"x-tenant-id: {{tenantId}}\"\n```",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "x-tenant-id", "value": "{{tenantId}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/prior-auth/txn",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "prior-auth",
+                "txn"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create Transaction",
+          "description": "Create a prior-auth transaction.\n\nExample:\n```bash\ncurl -X POST \"{{base_url}}/api/prior-auth/txn\" \\\n  -H \"Content-Type: application/json\" \\\n  -H \"x-tenant-id: {{tenantId}}\" \\\n  -d '{\n  \"request_id\": \"REQ-001\",\n  \"version\": \"1.0\",\n  \"type\": \"PA\",\n  \"request\": {},\n  \"response\": {}\n}'\n```",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-tenant-id", "value": "{{tenantId}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"request_id\": \"REQ-001\",\n  \"version\": \"1.0\",\n  \"type\": \"PA\",\n  \"request\": { },\n  \"response\": { }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/prior-auth/txn",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "prior-auth",
+                "txn"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create Random Transaction",
+          "description": "Generate a random prior-auth transaction for testing.\n\nExample:\n```bash\ncurl -X POST \"{{base_url}}/api/prior-auth/txn/random\" \\\n  -H \"x-tenant-id: {{tenantId}}\"\n```",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "x-tenant-id", "value": "{{tenantId}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/prior-auth/txn/random",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "prior-auth",
+                "txn",
+                "random"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:4000" },
+    { "key": "tenantId", "value": "tenant_001" },
+    { "key": "authToken", "value": "" }
+  ]
+}
+
+
