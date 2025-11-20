@@ -126,8 +126,8 @@ module.exports = {
       if (!req.db || !req.db.sequelize) {
         return next(fromCode('TENANT_DB_NOT_AVAILABLE'));
       }
-      const tables = await dbMetadataService.getTables(req.db.sequelize);
-      res.json(success(tables, 'Tables fetched successfully'));
+      const dataSources = await dbMetadataService.getTables(req.db.sequelize);
+      res.json(success(dataSources, 'Tables, views, and procedures fetched successfully'));
     } catch (err) {
       next(err);
     }
@@ -141,7 +141,7 @@ module.exports = {
       }
       const { tableName } = req.params;
       const columns = await dbMetadataService.getTableColumns(req.db.sequelize, tableName);
-      res.json(success(columns, 'Table columns fetched successfully'));
+      res.json(success(columns, 'Table or view columns fetched successfully'));
     } catch (err) {
       next(err);
     }

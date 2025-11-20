@@ -22,6 +22,16 @@ const PageConfig = masterSequelize.define('page_config', {
     type: DataTypes.STRING,
     allowNull: false
   },
+  source_type:{
+    type: DataTypes.ENUM('TABLE', 'VIEW', 'PROCEDURE'),
+    allowNull:false,
+    defaultValue:'TABLE'
+  },
+  source_params_json: {
+    // JSON string: [{ name, value, type? }] - parameters for views/procedures
+    type: DataTypes.TEXT,
+    allowNull: true
+  },
   columns_json: {
     // JSON string: [{ name, label, type, width? }]
     type: DataTypes.TEXT,

@@ -3,9 +3,9 @@ const { mapDbError } = require('../utils/dbErrorMapper');
 
 const dbMetadataService = {
   /**
-   * Get list of tables from tenant database
+   * Get list of tables, views, and procedures from tenant database
    * @param {Object} sequelize - Sequelize instance for tenant database
-   * @returns {Promise<Array>} Array of table names
+   * @returns {Promise<Array>} Array of objects with name and type { name, type }
    */
   async getTables(sequelize) {
     if (!sequelize) {
@@ -18,18 +18,55 @@ const dbMetadataService = {
 
       if (dialect === 'mysql') {
         query = `
-          SELECT TABLE_NAME as name
-          FROM INFORMATION_SCHEMA.TABLES
-          WHERE TABLE_SCHEMA = DATABASE()
-          AND TABLE_TYPE = 'BASE TABLE'
-          ORDER BY TABLE_NAME
+          (
+            SELECT TABLE_NAME AS name,
+                   CASE 
+                     WHEN TABLE_TYPE = 'BASE TABLE' THEN 'TABLE'
+                     WHEN TABLE_TYPE = 'VIEW' THEN 'VIEW'
+                     ELSE TABLE_TYPE
+                   END AS type
+            FROM INFORMATION_SCHEMA.TABLES
+            WHERE TABLE_SCHEMA = DATABASE()
+            AND (TABLE_TYPE = 'BASE TABLE' OR TABLE_TYPE = 'VIEW')
+          )
+          UNION ALL
+          (
+            SELECT ROUTINE_NAME AS name,
+                   CASE 
+                     WHEN ROUTINE_TYPE = 'PROCEDURE' THEN 'PROCEDURE'
+                     WHEN ROUTINE_TYPE = 'FUNCTION' THEN 'FUNCTION'
+                     ELSE ROUTINE_TYPE
+                   END AS type
+            FROM INFORMATION_SCHEMA.ROUTINES
+            WHERE ROUTINE_SCHEMA = DATABASE()
+            AND ROUTINE_TYPE = 'PROCEDURE'
+          )
+          ORDER BY name
         `;
       } else if (dialect === 'mssql') {
         query = `
-          SELECT TABLE_NAME as name
-          FROM INFORMATION_SCHEMA.TABLES
-          WHERE TABLE_TYPE = 'BASE TABLE'
-          ORDER BY TABLE_NAME
+          (
+            SELECT TABLE_NAME AS name,
+                   CASE 
+                     WHEN TABLE_TYPE = 'BASE TABLE' THEN 'TABLE'
+                     WHEN TABLE_TYPE = 'VIEW' THEN 'VIEW'
+                     ELSE TABLE_TYPE
+                   END AS type
+            FROM INFORMATION_SCHEMA.TABLES
+            WHERE (TABLE_TYPE = 'BASE TABLE' OR TABLE_TYPE = 'VIEW')
+          )
+          UNION ALL
+          (
+            SELECT ROUTINE_NAME AS name,
+                   CASE 
+                     WHEN ROUTINE_TYPE = 'PROCEDURE' THEN 'PROCEDURE'
+                     WHEN ROUTINE_TYPE = 'FUNCTION' THEN 'FUNCTION'
+                     ELSE ROUTINE_TYPE
+                   END AS type
+            FROM INFORMATION_SCHEMA.ROUTINES
+            WHERE ROUTINE_TYPE = 'PROCEDURE'
+          )
+          ORDER BY name
         `;
       } else {
         throw fromCode('UNSUPPORTED_DIALECT', [`Unsupported database dialect: ${dialect}`]);
@@ -39,7 +76,11 @@ const dbMetadataService = {
         type: sequelize.QueryTypes.SELECT
       });
 
-      return results.map(row => row.name);
+      // Return array of objects with name and type
+      return results.map(row => ({
+        name: row.name,
+        type: row.type
+      }));
     } catch (error) {
       if (error.code) throw error;
       throw mapDbError(error);
@@ -47,9 +88,9 @@ const dbMetadataService = {
   },
 
   /**
-   * Get columns from a specific table
+   * Get columns from a specific table or view
    * @param {Object} sequelize - Sequelize instance for tenant database
-   * @param {string} tableName - Name of the table
+   * @param {string} tableName - Name of the table or view
    * @returns {Promise<Array>} Array of column information
    */
   async getTableColumns(sequelize, tableName) {
@@ -58,12 +99,12 @@ const dbMetadataService = {
     }
 
     if (!tableName || typeof tableName !== 'string') {
-      throw fromCode('VALIDATION_ERROR', ['Table name is required']);
+      throw fromCode('VALIDATION_ERROR', ['Table or view name is required']);
     }
 
-    // Validate table name to prevent SQL injection
+    // Validate table/view name to prevent SQL injection
     if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(tableName)) {
-      throw fromCode('VALIDATION_ERROR', ['Invalid table name format']);
+      throw fromCode('VALIDATION_ERROR', ['Invalid table or view name format']);
     }
 
     try {
@@ -118,9 +159,10 @@ const dbMetadataService = {
   },
 
   /**
-   * Get index information for columns in a table
+   * Get index information for columns in a table or view
+   * Note: Views typically don't have indexes, but this method works for tables
    * @param {Object} sequelize - Sequelize instance for tenant database
-   * @param {string} tableName - Name of the table
+   * @param {string} tableName - Name of the table or view
    * @returns {Promise<Object>} Object mapping column names to index information
    */
   async getTableIndexes(sequelize, tableName) {
@@ -129,12 +171,12 @@ const dbMetadataService = {
     }
 
     if (!tableName || typeof tableName !== 'string') {
-      throw fromCode('VALIDATION_ERROR', ['Table name is required']);
+      throw fromCode('VALIDATION_ERROR', ['Table or view name is required']);
     }
 
-    // Validate table name to prevent SQL injection
+    // Validate table/view name to prevent SQL injection
     if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(tableName)) {
-      throw fromCode('VALIDATION_ERROR', ['Invalid table name format']);
+      throw fromCode('VALIDATION_ERROR', ['Invalid table or view name format']);
     }
 
     try {

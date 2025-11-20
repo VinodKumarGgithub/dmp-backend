@@ -41,6 +41,8 @@ const pageService = {
           page_key: page.page_key,
           title: page.title,
           data_source: page.data_source,
+          source_type: page.source_type || 'TABLE',
+          source_params: parseJsonField(page.source_params_json, []),
           columns: parseJsonField(page.columns_json, []),
           searchable_fields: parseJsonField(page.searchable_fields_json, []),
           filterable_fields: parseJsonField(page.filterable_fields_json, []),
@@ -133,18 +135,30 @@ const pageService = {
       });
     }
 
-    // Sorting (whitelist field names)
+    // Sorting (whitelist field names if columns are specified, otherwise allow any field)
     const colNames = Array.isArray(columns) ? columns.map((c) => c && c.name).filter(Boolean) : [];
     let orderBy = '';
     if (sortBy && typeof sortBy === 'string') {
-      if (!colNames.includes(sortBy)) {
+      // Validate field name is safe
+      if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(sortBy)) {
+        throw fromCode('VALIDATION_ERROR', [`Invalid sort field: ${sortBy}`]);
+      }
+      // If columns are specified, validate against them; otherwise allow any field
+      if (colNames.length > 0 && !colNames.includes(sortBy)) {
         throw fromCode('VALIDATION_ERROR', [`Invalid sort field: ${sortBy}. Must be one of: ${colNames.join(', ')}`]);
       }
       const dir = (sortOrder || 'ASC').toString().toUpperCase() === 'DESC' ? 'DESC' : 'ASC';
       orderBy = `ORDER BY ${sortBy} ${dir}`;
-    } else if (default_sort && default_sort.field && colNames.includes(default_sort.field)) {
-      const dir = (default_sort.order || 'ASC').toString().toUpperCase() === 'DESC' ? 'DESC' : 'ASC';
-      orderBy = `ORDER BY ${default_sort.field} ${dir}`;
+    } else if (default_sort && default_sort.field) {
+      // Validate field name is safe
+      if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(default_sort.field)) {
+        throw fromCode('VALIDATION_ERROR', [`Invalid default sort field: ${default_sort.field}`]);
+      }
+      // If columns are specified, validate against them; otherwise allow any field
+      if (colNames.length === 0 || colNames.includes(default_sort.field)) {
+        const dir = (default_sort.order || 'ASC').toString().toUpperCase() === 'DESC' ? 'DESC' : 'ASC';
+        orderBy = `ORDER BY ${default_sort.field} ${dir}`;
+      }
     }
 
     const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
@@ -159,7 +173,56 @@ const pageService = {
     }
 
     const tenantSequelize = reqDb.sequelize;
+    const { source_type = 'TABLE', source_params = [], data_source } = config;
 
+    // Handle PROCEDURE type
+    if (source_type === 'PROCEDURE') {
+      try {
+        // Build procedure parameters from config and query params
+        const procedureParams = this.buildProcedureParams(source_params, queryParams);
+        
+        // Build procedure call - dialect specific
+        const dialect = tenantSequelize.getDialect();
+        let procedureCall;
+        if (dialect === 'mysql') {
+          // MySQL: CALL procedure_name(param1, param2, ...)
+          const paramPlaceholders = procedureParams.map((_, idx) => `:param${idx}`).join(', ');
+          procedureCall = `CALL ${data_source}(${paramPlaceholders})`;
+        } else if (dialect === 'mssql') {
+          // SQL Server: EXEC procedure_name @param1=value1, @param2=value2, ...
+          const paramList = procedureParams.map((param, idx) => `@param${idx}=:param${idx}`).join(', ');
+          procedureCall = `EXEC ${data_source} ${paramList}`;
+        } else {
+          throw fromCode('UNSUPPORTED_DIALECT', [`Unsupported database dialect: ${dialect}`]);
+        }
+
+        const procedureReplacements = {};
+        procedureParams.forEach((param, idx) => {
+          procedureReplacements[`param${idx}`] = param;
+        });
+
+        // Execute procedure
+        const dataRows = await tenantSequelize.query(procedureCall, {
+          replacements: procedureReplacements,
+          type: tenantSequelize.QueryTypes.SELECT
+        });
+
+        // For procedures, we can't easily get count, so use data length
+        // Apply pagination manually if needed
+        const page = parseInt(queryParams.page || 1, 10);
+        const pageSize = parseInt(queryParams.pageSize || config.page_size_default || 20, 10);
+        const offset = (page - 1) * pageSize;
+        const paginatedData = Array.isArray(dataRows) ? dataRows.slice(offset, offset + pageSize) : [];
+        const total = Array.isArray(dataRows) ? dataRows.length : 0;
+
+        return { data: paginatedData, total };
+      } catch (error) {
+        if (error.code) throw error;
+        throw mapDbError(error);
+      }
+    }
+
+    // Handle TABLE and VIEW types
     let queryResult;
     try {
       queryResult = this.buildQuery(config, queryParams);
@@ -168,11 +231,13 @@ const pageService = {
       throw error;
     }
 
-    const { whereClause, orderBy, limit, offset, replacements, data_source } = queryResult;
+    const { whereClause, orderBy, limit, offset, replacements, data_source: queryDataSource } = queryResult;
 
     try {
       // Build the SQL queries
-      const baseSql = `FROM ${data_source} ${whereClause}`;
+      // For views with parameters, we might need to handle them differently
+      // For now, views are treated like tables
+      const baseSql = `FROM ${queryDataSource} ${whereClause}`;
       const dataSql = `SELECT * ${baseSql} ${orderBy} LIMIT :limit OFFSET :offset`;
       const countSql = `SELECT COUNT(*) as cnt ${baseSql}`;
 
@@ -236,26 +301,19 @@ const pageService = {
       throw fromCode('PAGE_DATA_SOURCE_INVALID', [`Invalid data source name: ${data_source}`]);
     }
 
-    // Validate and extract column names from config.columns
-    if (!Array.isArray(columns) || columns.length === 0) {
-      throw fromCode('PAGE_CONFIG_INVALID', ['Page columns configuration is missing or invalid']);
-    }
-
-    // Extract and validate column names
-    const colNames = columns
-      .map((c) => c && c.name)
-      .filter(Boolean)
-      .filter((name) => {
-        // Validate column name is safe (alphanumeric, underscore, no SQL injection)
-        if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)) {
-          return false;
-        }
-        return true;
-      });
-
-    if (colNames.length === 0) {
-      throw fromCode('PAGE_CONFIG_INVALID', ['No valid columns found in page configuration']);
-    }
+    // Extract and validate column names (optional - if not specified, use *)
+    const colNames = Array.isArray(columns) && columns.length > 0
+      ? columns
+          .map((c) => c && c.name)
+          .filter(Boolean)
+          .filter((name) => {
+            // Validate column name is safe (alphanumeric, underscore, no SQL injection)
+            if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)) {
+              return false;
+            }
+            return true;
+          })
+      : [];
 
     const { search, sortBy, sortOrder } = queryParams;
 
@@ -313,25 +371,36 @@ const pageService = {
       });
     }
 
-    // Sorting (whitelist field names)
+    // Sorting (whitelist field names if columns are specified, otherwise allow any field)
     let orderBy = '';
     if (sortBy && typeof sortBy === 'string') {
-      if (!colNames.includes(sortBy)) {
+      // Validate field name is safe
+      if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(sortBy)) {
+        throw fromCode('VALIDATION_ERROR', [`Invalid sort field: ${sortBy}`]);
+      }
+      // If columns are specified, validate against them; otherwise allow any field
+      if (colNames.length > 0 && !colNames.includes(sortBy)) {
         throw fromCode('VALIDATION_ERROR', [`Invalid sort field: ${sortBy}. Must be one of: ${colNames.join(', ')}`]);
       }
       const dir = (sortOrder || 'ASC').toString().toUpperCase() === 'DESC' ? 'DESC' : 'ASC';
       orderBy = `ORDER BY ${sortBy} ${dir}`;
-    } else if (default_sort && default_sort.field && colNames.includes(default_sort.field)) {
-      const dir = (default_sort.order || 'ASC').toString().toUpperCase() === 'DESC' ? 'DESC' : 'ASC';
-      orderBy = `ORDER BY ${default_sort.field} ${dir}`;
+    } else if (default_sort && default_sort.field) {
+      // Validate field name is safe
+      if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(default_sort.field)) {
+        throw fromCode('VALIDATION_ERROR', [`Invalid default sort field: ${default_sort.field}`]);
+      }
+      // If columns are specified, validate against them; otherwise allow any field
+      if (colNames.length === 0 || colNames.includes(default_sort.field)) {
+        const dir = (default_sort.order || 'ASC').toString().toUpperCase() === 'DESC' ? 'DESC' : 'ASC';
+        orderBy = `ORDER BY ${default_sort.field} ${dir}`;
+      }
     }
 
     const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
     try {
-      // Build SQL query with specific columns from config instead of SELECT *
-      // Join column names with comma (they're already validated as safe identifiers)
-      const selectColumns = colNames.join(', ');
+      // Build SQL query - use specific columns if provided, otherwise use *
+      const selectColumns = colNames.length > 0 ? colNames.join(', ') : '*';
       const dataSql = `SELECT ${selectColumns} FROM ${data_source} ${whereClause} ${orderBy}`;
 
       // Execute query using req.db.sequelize.query to get all data

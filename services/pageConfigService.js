@@ -11,6 +11,17 @@ const pageConfigService = {
       page_key: Joi.string().required().min(1).max(100).pattern(/^[a-zA-Z0-9_-]+$/),
       title: Joi.string().required().min(1).max(200),
       data_source: Joi.string().required().min(1).max(100).pattern(/^[a-zA-Z_][a-zA-Z0-9_]*$/),
+      source_type: Joi.string().valid('TABLE', 'VIEW', 'PROCEDURE').default('TABLE'),
+      source_params: Joi.array()
+        .items(
+          Joi.object({
+            name: Joi.string().required(),
+            value: Joi.alternatives().try(Joi.string(), Joi.number(), Joi.boolean()).allow(null, ''),
+            type: Joi.string().valid('string', 'number', 'boolean', 'date').optional(),
+          })
+        )
+        .min(0)
+        .default([]),
       columns: Joi.array()
         .items(
           Joi.object({
@@ -20,8 +31,8 @@ const pageConfigService = {
             width: Joi.number().optional(),
           })
         )
-        .min(1)
-        .required(),
+        .min(0)
+        .default([]),
       searchable_fields: Joi.array().items(Joi.string()).min(0).required(),
       filterable_fields: Joi.array()
         .items(
@@ -62,7 +73,9 @@ const pageConfigService = {
           page_key: data.page_key,
           title: data.title,
           data_source: data.data_source,
-          columns_json: JSON.stringify(data.columns),
+          source_type: data.source_type || 'TABLE',
+          source_params_json: data.source_params ? JSON.stringify(data.source_params) : null,
+          columns_json: JSON.stringify(data.columns || []),
           searchable_fields_json: JSON.stringify(data.searchable_fields),
           filterable_fields_json: JSON.stringify(data.filterable_fields),
           is_download_allowed: data.is_download_allowed,
@@ -85,6 +98,16 @@ const pageConfigService = {
     const schema = Joi.object({
       title: Joi.string().min(1).max(200),
       data_source: Joi.string().min(1).max(100).pattern(/^[a-zA-Z_][a-zA-Z0-9_]*$/),
+      source_type: Joi.string().valid('TABLE', 'VIEW', 'PROCEDURE'),
+      source_params: Joi.array()
+        .items(
+          Joi.object({
+            name: Joi.string().required(),
+            value: Joi.alternatives().try(Joi.string(), Joi.number(), Joi.boolean()).allow(null, ''),
+            type: Joi.string().valid('string', 'number', 'boolean', 'date').optional(),
+          })
+        )
+        .min(0),
       columns: Joi.array()
         .items(
           Joi.object({
@@ -94,7 +117,7 @@ const pageConfigService = {
             width: Joi.number().optional(),
           })
         )
-        .min(1),
+        .min(0),
       searchable_fields: Joi.array().items(Joi.string()).min(0),
       filterable_fields: Joi.array()
         .items(
@@ -129,7 +152,9 @@ const pageConfigService = {
       const updateData = {};
       if (data.title !== undefined) updateData.title = data.title;
       if (data.data_source !== undefined) updateData.data_source = data.data_source;
-      if (data.columns !== undefined) updateData.columns_json = JSON.stringify(data.columns);
+      if (data.source_type !== undefined) updateData.source_type = data.source_type;
+      if (data.source_params !== undefined) updateData.source_params_json = data.source_params ? JSON.stringify(data.source_params) : null;
+      if (data.columns !== undefined) updateData.columns_json = JSON.stringify(data.columns || []);
       if (data.searchable_fields !== undefined)
         updateData.searchable_fields_json = JSON.stringify(data.searchable_fields);
       if (data.filterable_fields !== undefined)
