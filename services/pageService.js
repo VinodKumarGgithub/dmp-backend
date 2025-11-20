@@ -1,6 +1,26 @@
 const { fromCode } = require('../utils/errors');
 const { mapDbError } = require('../utils/dbErrorMapper');
 const { PageConfig } = require('../models/PageConfig');
+const { dbMetadataService } = require('./dbMetadataService');
+
+/**
+ * Escape column/identifier names to handle reserved keywords
+ * MySQL uses backticks, SQL Server uses square brackets
+ */
+function escapeIdentifier(sequelize, identifier) {
+  if (!identifier || typeof identifier !== 'string') {
+    return identifier;
+  }
+  
+  const dialect = sequelize.getDialect();
+  if (dialect === 'mysql') {
+    return `\`${identifier}\``;
+  } else if (dialect === 'mssql') {
+    return `[${identifier}]`;
+  }
+  // For other dialects, return as-is (PostgreSQL uses double quotes)
+  return identifier;
+}
 
 function parseJsonField(text, fallback) {
   if (!text) return fallback;
@@ -60,7 +80,7 @@ const pageService = {
     }
   },
 
-  buildQuery(config, queryParams) {
+  buildQuery(config, queryParams, sequelize) {
     if (!config || !config.data_source) {
       throw fromCode('PAGE_CONFIG_INVALID', ['Page configuration is missing data_source']);
     }
@@ -75,7 +95,16 @@ const pageService = {
     const { search, sortBy, sortOrder, page = 1, pageSize } = queryParams;
 
     // Validate pagination params
-    const limit = Math.min(parseInt(pageSize || config.page_size_default, 10) || 20, 100); // cap
+    // Use pageSize if provided, otherwise use config.page_size_default, fallback to 20
+    const defaultPageSize = config.page_size_default || 20;
+    let requestedPageSize = defaultPageSize;
+    if (pageSize !== undefined && pageSize !== null && pageSize !== '') {
+      const parsed = parseInt(pageSize, 10);
+      if (!isNaN(parsed) && parsed > 0) {
+        requestedPageSize = parsed;
+      }
+    }
+    const limit = Math.min(Math.max(requestedPageSize, 1), 100); // cap between 1 and 100
     const pageNum = Math.max(parseInt(page, 10) || 1, 1);
     const offset = (pageNum - 1) * limit;
 
@@ -94,7 +123,8 @@ const pageService = {
           throw fromCode('PAGE_CONFIG_INVALID', [`Invalid searchable field name: ${field}`]);
         }
         const key = `search_${idx}`;
-        likeClauses.push(`${field} LIKE :${key}`);
+        const escapedField = sequelize ? escapeIdentifier(sequelize, field) : field;
+        likeClauses.push(`${escapedField} LIKE :${key}`);
         replacements[key] = `%${search.trim()}%`;
       });
       if (likeClauses.length) {
@@ -117,19 +147,20 @@ const pageService = {
         if (value === undefined || value === null || value === '') return;
 
         const paramKey = `f_${f.name}`;
+        const escapedField = sequelize ? escapeIdentifier(sequelize, f.name) : f.name;
         switch (f.type) {
           case 'text':
           case 'string':
-            where.push(`${f.name} LIKE :${paramKey}`);
+            where.push(`${escapedField} LIKE :${paramKey}`);
             replacements[paramKey] = `%${String(value)}%`;
             break;
           case 'select':
           case 'number':
-            where.push(`${f.name} = :${paramKey}`);
+            where.push(`${escapedField} = :${paramKey}`);
             replacements[paramKey] = value;
             break;
           default:
-            where.push(`${f.name} = :${paramKey}`);
+            where.push(`${escapedField} = :${paramKey}`);
             replacements[paramKey] = value;
         }
       });
@@ -148,7 +179,8 @@ const pageService = {
         throw fromCode('VALIDATION_ERROR', [`Invalid sort field: ${sortBy}. Must be one of: ${colNames.join(', ')}`]);
       }
       const dir = (sortOrder || 'ASC').toString().toUpperCase() === 'DESC' ? 'DESC' : 'ASC';
-      orderBy = `ORDER BY ${sortBy} ${dir}`;
+      const escapedSortBy = sequelize ? escapeIdentifier(sequelize, sortBy) : sortBy;
+      orderBy = `ORDER BY ${escapedSortBy} ${dir}`;
     } else if (default_sort && default_sort.field) {
       // Validate field name is safe
       if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(default_sort.field)) {
@@ -157,7 +189,8 @@ const pageService = {
       // If columns are specified, validate against them; otherwise allow any field
       if (colNames.length === 0 || colNames.includes(default_sort.field)) {
         const dir = (default_sort.order || 'ASC').toString().toUpperCase() === 'DESC' ? 'DESC' : 'ASC';
-        orderBy = `ORDER BY ${default_sort.field} ${dir}`;
+        const escapedField = sequelize ? escapeIdentifier(sequelize, default_sort.field) : default_sort.field;
+        orderBy = `ORDER BY ${escapedField} ${dir}`;
       }
     }
 
@@ -210,7 +243,9 @@ const pageService = {
         // For procedures, we can't easily get count, so use data length
         // Apply pagination manually if needed
         const page = parseInt(queryParams.page || 1, 10);
-        const pageSize = parseInt(queryParams.pageSize || config.page_size_default || 20, 10);
+        const defaultPageSize = config.page_size_default || 20;
+        const requestedPageSize = queryParams.pageSize ? parseInt(queryParams.pageSize, 10) : defaultPageSize;
+        const pageSize = Math.min(Math.max(parseInt(requestedPageSize, 10) || defaultPageSize, 1), 100);
         const offset = (page - 1) * pageSize;
         const paginatedData = Array.isArray(dataRows) ? dataRows.slice(offset, offset + pageSize) : [];
         const total = Array.isArray(dataRows) ? dataRows.length : 0;
@@ -225,7 +260,7 @@ const pageService = {
     // Handle TABLE and VIEW types
     let queryResult;
     try {
-      queryResult = this.buildQuery(config, queryParams);
+      queryResult = this.buildQuery(config, queryParams, tenantSequelize);
     } catch (error) {
       // buildQuery already throws mapped errors
       throw error;
@@ -239,22 +274,32 @@ const pageService = {
       // For now, views are treated like tables
       const baseSql = `FROM ${queryDataSource} ${whereClause}`;
       const dataSql = `SELECT * ${baseSql} ${orderBy} LIMIT :limit OFFSET :offset`;
-      const countSql = `SELECT COUNT(*) as cnt ${baseSql}`;
 
-      // Execute queries using req.db.sequelize.query
-      // Sequelize query returns [results, metadata], so we destructure to get the results
+      // Execute data query
       const dataRows = await tenantSequelize.query(dataSql, {
         replacements: { ...replacements, limit, offset },
         type: tenantSequelize.QueryTypes.SELECT
       });
 
-      const [countRows] = await tenantSequelize.query(countSql, {
-        replacements,
-        type: tenantSequelize.QueryTypes.SELECT
-      });
-
-      const total = Array.isArray(countRows) && countRows.length ? parseInt(countRows[0].cnt, 10) || 0 : 0;
       const data = Array.isArray(dataRows) ? dataRows : [];
+
+      // Get total count: always use metadata (never use COUNT(*) for performance)
+      // For filtered queries, we still use metadata (approximate is better than expensive COUNT)
+      let total = 0;
+      try {
+        const metadataCount = await dbMetadataService.getTableRowCount(tenantSequelize, queryDataSource, source_type);
+        if (metadataCount !== null) {
+          total = metadataCount;
+        } else {
+          // For views/procedures or when metadata not available, use a large default
+          // This allows pagination to work, though total may be approximate
+          // Frontend will handle "showing X-Y of many" appropriately
+          total = 1000000; // Large default to indicate "many" records
+        }
+      } catch (metadataError) {
+        // If metadata query fails, use large default
+        total = 1000000;
+      }
 
       return { data, total };
     } catch (error) {
@@ -288,18 +333,57 @@ const pageService = {
     }
 
     const tenantSequelize = reqDb.sequelize;
+    const { source_type = 'TABLE', source_params = [], data_source } = config;
 
-    // Build query without pagination
-    if (!config || !config.data_source) {
-      throw fromCode('PAGE_CONFIG_INVALID', ['Page configuration is missing data_source']);
+    // Handle PROCEDURE type
+    if (source_type === 'PROCEDURE') {
+      try {
+        // Build procedure parameters from config and query params
+        const procedureParams = this.buildProcedureParams(source_params, queryParams);
+        
+        // Build procedure call - dialect specific
+        const dialect = tenantSequelize.getDialect();
+        let procedureCall;
+        if (dialect === 'mysql') {
+          const paramPlaceholders = procedureParams.map((_, idx) => `:param${idx}`).join(', ');
+          procedureCall = `CALL ${data_source}(${paramPlaceholders})`;
+        } else if (dialect === 'mssql') {
+          const paramList = procedureParams.map((param, idx) => `@param${idx}=:param${idx}`).join(', ');
+          procedureCall = `EXEC ${data_source} ${paramList}`;
+        } else {
+          throw fromCode('UNSUPPORTED_DIALECT', [`Unsupported database dialect: ${dialect}`]);
+        }
+
+        const procedureReplacements = {};
+        procedureParams.forEach((param, idx) => {
+          procedureReplacements[`param${idx}`] = param;
+        });
+
+        // Execute procedure
+        const dataRows = await tenantSequelize.query(procedureCall, {
+          replacements: procedureReplacements,
+          type: tenantSequelize.QueryTypes.SELECT
+        });
+
+        const data = Array.isArray(dataRows) ? dataRows : [];
+        return { data };
+      } catch (error) {
+        if (error.code) throw error;
+        throw mapDbError(error);
+      }
     }
 
-    const { columns, searchable_fields, filterable_fields, default_sort, data_source } = config;
-    
-    // Validate data_source is a safe identifier
-    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(data_source)) {
-      throw fromCode('PAGE_DATA_SOURCE_INVALID', [`Invalid data source name: ${data_source}`]);
+    // Use buildQuery to ensure same conditions as getPageData (but without pagination)
+    let queryResult;
+    try {
+      queryResult = this.buildQuery(config, queryParams, tenantSequelize);
+    } catch (error) {
+      // buildQuery already throws mapped errors
+      throw error;
     }
+
+    const { whereClause, orderBy, replacements, data_source: queryDataSource } = queryResult;
+    const { columns } = config;
 
     // Extract and validate column names (optional - if not specified, use *)
     const colNames = Array.isArray(columns) && columns.length > 0
@@ -315,93 +399,16 @@ const pageService = {
           })
       : [];
 
-    const { search, sortBy, sortOrder } = queryParams;
-
-    const where = [];
-    const replacements = {};
-
-    // Search across configured searchable fields
-    if (search && typeof search === 'string' && search.trim()) {
-      if (!Array.isArray(searchable_fields) || searchable_fields.length === 0) {
-        throw fromCode('PAGE_CONFIG_INVALID', ['No searchable fields configured for this page']);
-      }
-      const likeClauses = [];
-      searchable_fields.forEach((field, idx) => {
-        if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(field)) {
-          throw fromCode('PAGE_CONFIG_INVALID', [`Invalid searchable field name: ${field}`]);
-        }
-        const key = `search_${idx}`;
-        likeClauses.push(`${field} LIKE :${key}`);
-        replacements[key] = `%${search.trim()}%`;
-      });
-      if (likeClauses.length) {
-        where.push(`(${likeClauses.join(' OR ')})`);
-      }
-    }
-
-    // Filters based on filterable_fields config
-    if (Array.isArray(filterable_fields)) {
-      filterable_fields.forEach((f) => {
-        if (!f || !f.name || typeof f.name !== 'string') {
-          throw fromCode('PAGE_CONFIG_INVALID', ['Invalid filterable field configuration']);
-        }
-        if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(f.name)) {
-          throw fromCode('PAGE_CONFIG_INVALID', [`Invalid filterable field name: ${f.name}`]);
-        }
-
-        const value = queryParams[f.name];
-        if (value === undefined || value === null || value === '') return;
-
-        const paramKey = `f_${f.name}`;
-        switch (f.type) {
-          case 'text':
-          case 'string':
-            where.push(`${f.name} LIKE :${paramKey}`);
-            replacements[paramKey] = `%${String(value)}%`;
-            break;
-          case 'select':
-          case 'number':
-            where.push(`${f.name} = :${paramKey}`);
-            replacements[paramKey] = value;
-            break;
-          default:
-            where.push(`${f.name} = :${paramKey}`);
-            replacements[paramKey] = value;
-        }
-      });
-    }
-
-    // Sorting (whitelist field names if columns are specified, otherwise allow any field)
-    let orderBy = '';
-    if (sortBy && typeof sortBy === 'string') {
-      // Validate field name is safe
-      if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(sortBy)) {
-        throw fromCode('VALIDATION_ERROR', [`Invalid sort field: ${sortBy}`]);
-      }
-      // If columns are specified, validate against them; otherwise allow any field
-      if (colNames.length > 0 && !colNames.includes(sortBy)) {
-        throw fromCode('VALIDATION_ERROR', [`Invalid sort field: ${sortBy}. Must be one of: ${colNames.join(', ')}`]);
-      }
-      const dir = (sortOrder || 'ASC').toString().toUpperCase() === 'DESC' ? 'DESC' : 'ASC';
-      orderBy = `ORDER BY ${sortBy} ${dir}`;
-    } else if (default_sort && default_sort.field) {
-      // Validate field name is safe
-      if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(default_sort.field)) {
-        throw fromCode('VALIDATION_ERROR', [`Invalid default sort field: ${default_sort.field}`]);
-      }
-      // If columns are specified, validate against them; otherwise allow any field
-      if (colNames.length === 0 || colNames.includes(default_sort.field)) {
-        const dir = (default_sort.order || 'ASC').toString().toUpperCase() === 'DESC' ? 'DESC' : 'ASC';
-        orderBy = `ORDER BY ${default_sort.field} ${dir}`;
-      }
-    }
-
-    const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
-
     try {
       // Build SQL query - use specific columns if provided, otherwise use *
-      const selectColumns = colNames.length > 0 ? colNames.join(', ') : '*';
-      const dataSql = `SELECT ${selectColumns} FROM ${data_source} ${whereClause} ${orderBy}`;
+      // Use same conditions from buildQuery (whereClause, orderBy, replacements) - no pagination
+      // Escape column names to handle reserved keywords
+      let selectColumns = '*';
+      if (colNames.length > 0) {
+        const escapedColumns = colNames.map(col => escapeIdentifier(tenantSequelize, col));
+        selectColumns = escapedColumns.join(', ');
+      }
+      const dataSql = `SELECT ${selectColumns} FROM ${queryDataSource} ${whereClause} ${orderBy}`;
 
       // Execute query using req.db.sequelize.query to get all data
       // Sequelize query returns [results, metadata], so we destructure to get the results

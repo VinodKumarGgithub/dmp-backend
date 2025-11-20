@@ -242,6 +242,74 @@ const dbMetadataService = {
   },
 
   /**
+   * Get approximate row count from metadata (faster than COUNT(*) on large tables)
+   * Works for tables. For views, returns null as views don't have metadata row counts.
+   * @param {Object} sequelize - Sequelize instance for tenant database
+   * @param {string} tableName - Name of the table or view
+   * @param {string} sourceType - Type of source: 'TABLE', 'VIEW', or 'PROCEDURE'
+   * @returns {Promise<number|null>} Approximate row count or null if not available
+   */
+  async getTableRowCount(sequelize, tableName, sourceType = 'TABLE') {
+    if (!sequelize) {
+      throw fromCode('TENANT_DB_NOT_AVAILABLE', ['Database connection not available']);
+    }
+
+    if (!tableName || typeof tableName !== 'string') {
+      throw fromCode('VALIDATION_ERROR', ['Table name is required']);
+    }
+
+    // Validate table name to prevent SQL injection
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(tableName)) {
+      throw fromCode('VALIDATION_ERROR', ['Invalid table name format']);
+    }
+
+    // Views and procedures don't have metadata row counts
+    if (sourceType === 'VIEW' || sourceType === 'PROCEDURE') {
+      return null;
+    }
+
+    try {
+      const dialect = sequelize.getDialect();
+      let query;
+
+      if (dialect === 'mysql') {
+        query = `
+          SELECT TABLE_ROWS as row_count
+          FROM INFORMATION_SCHEMA.TABLES
+          WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = :tableName
+          AND TABLE_TYPE = 'BASE TABLE'
+        `;
+      } else if (dialect === 'mssql') {
+        query = `
+          SELECT SUM(p.rows) as row_count
+          FROM sys.tables t
+          INNER JOIN sys.partitions p ON t.object_id = p.object_id
+          WHERE t.name = :tableName
+          AND p.index_id IN (0, 1)
+          GROUP BY t.name
+        `;
+      } else {
+        throw fromCode('UNSUPPORTED_DIALECT', [`Unsupported database dialect: ${dialect}`]);
+      }
+
+      const results = await sequelize.query(query, {
+        type: sequelize.QueryTypes.SELECT,
+        replacements: { tableName }
+      });
+
+      if (Array.isArray(results) && results.length > 0 && results[0].row_count !== null) {
+        return parseInt(results[0].row_count, 10) || 0;
+      }
+
+      return null; // Not available
+    } catch (error) {
+      if (error.code) throw error;
+      throw mapDbError(error);
+    }
+  },
+
+  /**
    * Map database-specific data types to generic types
    * @param {string} dbType - Database-specific type
    * @returns {string} Generic type (string, number, date, boolean)
