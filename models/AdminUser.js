@@ -37,7 +37,6 @@ const AdminUser = masterSequelize.define('admin_user', {
   timestamps: false
 });
 
-AdminUser.sync({ alter: true });
 module.exports = { AdminUser };
 
 

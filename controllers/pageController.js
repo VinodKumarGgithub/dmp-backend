@@ -159,6 +159,20 @@ module.exports = {
     } catch (err) {
       next(err);
     }
+  },
+
+  // GET /api/pages/db/procedures/:procedureName/parameters (needs tenant DB)
+  async getProcedureParameters(req, res, next) {
+    try {
+      if (!req.db || !req.db.sequelize) {
+        return next(fromCode('TENANT_DB_NOT_AVAILABLE'));
+      }
+      const { procedureName } = req.params;
+      const parameters = await dbMetadataService.getProcedureParameters(req.db.sequelize, procedureName);
+      res.json(success(parameters, 'Procedure parameters fetched successfully'));
+    } catch (err) {
+      next(err);
+    }
   }
 };
 

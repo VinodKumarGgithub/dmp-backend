@@ -242,6 +242,94 @@ const dbMetadataService = {
   },
 
   /**
+   * Get parameters for a stored procedure
+   * @param {Object} sequelize - Sequelize instance for tenant database
+   * @param {string} procedureName - Name of the stored procedure
+   * @returns {Promise<Array>} Array of parameter information { name, type, nullable, default_value }
+   */
+  async getProcedureParameters(sequelize, procedureName) {
+    if (!sequelize) {
+      throw fromCode('TENANT_DB_NOT_AVAILABLE', ['Database connection not available']);
+    }
+
+    if (!procedureName || typeof procedureName !== 'string') {
+      throw fromCode('VALIDATION_ERROR', ['Procedure name is required']);
+    }
+
+    // Validate procedure name to prevent SQL injection
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(procedureName)) {
+      throw fromCode('VALIDATION_ERROR', ['Invalid procedure name format']);
+    }
+
+    try {
+      const dialect = sequelize.getDialect();
+      let query;
+
+      if (dialect === 'mysql') {
+        // MySQL INFORMATION_SCHEMA.PARAMETERS doesn't have PARAMETER_DEFAULT column
+        // Default values are not available through INFORMATION_SCHEMA for MySQL procedures
+        // Users will need to set default values manually in the UI
+        query = `
+          SELECT 
+            PARAMETER_NAME as name,
+            DATA_TYPE as type,
+            NULL as default_value,
+            PARAMETER_MODE as mode,
+            ORDINAL_POSITION as ordinal_position
+          FROM INFORMATION_SCHEMA.PARAMETERS
+          WHERE SPECIFIC_SCHEMA = DATABASE()
+          AND SPECIFIC_NAME = :procedureName
+          AND PARAMETER_MODE = 'IN'
+          ORDER BY ORDINAL_POSITION
+        `;
+      } else if (dialect === 'mssql') {
+        query = `
+          SELECT 
+            p.name as name,
+            t.name as type,
+            p.is_nullable as nullable,
+            ISNULL(OBJECT_DEFINITION(p.default_object_id), '') as default_value,
+            'IN' as mode
+          FROM sys.parameters p
+          INNER JOIN sys.types t ON p.user_type_id = t.user_type_id
+          INNER JOIN sys.objects o ON p.object_id = o.object_id
+          WHERE o.name = :procedureName
+          AND o.type = 'P'
+          AND p.parameter_id > 0
+          ORDER BY p.parameter_id
+        `;
+      } else {
+        throw fromCode('UNSUPPORTED_DIALECT', [`Unsupported database dialect: ${dialect}`]);
+      }
+
+      const results = await sequelize.query(query, {
+        type: sequelize.QueryTypes.SELECT,
+        replacements: { procedureName }
+      });
+
+      return results.map(param => {
+        // For MySQL, IS_NULLABLE doesn't exist in PARAMETERS table
+        // We can infer nullability: if default_value is NULL, parameter is likely nullable
+        // For SQL Server, we have is_nullable directly
+        const nullable = dialect === 'mysql' 
+          ? (param.default_value === null || param.default_value === 'NULL')
+          : (param.nullable === 'YES' || param.nullable === 1 || param.nullable === true);
+        
+        return {
+          name: param.name,
+          type: this.mapDataType(param.type),
+          nullable: nullable,
+          default_value: param.default_value && param.default_value !== 'NULL' ? param.default_value : null,
+          mode: param.mode || 'IN'
+        };
+      });
+    } catch (error) {
+      if (error.code) throw error;
+      throw mapDbError(error);
+    }
+  },
+
+  /**
    * Get approximate row count from metadata (faster than COUNT(*) on large tables)
    * Works for tables. For views, returns null as views don't have metadata row counts.
    * @param {Object} sequelize - Sequelize instance for tenant database

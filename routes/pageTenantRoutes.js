@@ -6,7 +6,8 @@ const {
   downloadPageData,
   getTables,
   getTableColumns,
-  getTableIndexes
+  getTableIndexes,
+  getProcedureParameters
 } = require('../controllers/pageController');
 
 const router = express.Router();
@@ -18,6 +19,7 @@ router.use(authMiddleware);
 router.get('/db/tables', getTables);
 router.get('/db/tables/:tableName/columns', getTableColumns);
 router.get('/db/tables/:tableName/indexes', getTableIndexes);
+router.get('/db/procedures/:procedureName/parameters', getProcedureParameters);
 
 // Page data routes
 router.get('/:pageKey', getPageConfigAndData);
