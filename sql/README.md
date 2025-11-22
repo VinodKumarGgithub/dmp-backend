@@ -22,6 +22,7 @@ INSERT INTO page_configs (
   searchable_fields_json,
   filterable_fields_json,
   is_download_allowed,
+  download_row_limit,
   default_sort_json,
   page_size_default
 ) VALUES (
@@ -33,6 +34,7 @@ INSERT INTO page_configs (
   '["patient_id", "status"]',
   '[{"name": "status", "label": "Status", "type": "select", "options": ["OPEN", "CLOSED"]}]',
   true,
+  5000,
   '{"field": "created_at", "order": "DESC"}',
   20
 );
@@ -48,6 +50,7 @@ INSERT INTO page_configs (
 - **searchable_fields_json**: JSON array of field names for global search
 - **filterable_fields_json**: JSON array of filter configurations
 - **is_download_allowed**: Boolean flag for CSV/Excel download
+- **download_row_limit**: Optional integer cap on CSV download size (null for unlimited)
 - **default_sort_json**: JSON object with default sorting (optional)
 - **page_size_default**: Default number of rows per page
 

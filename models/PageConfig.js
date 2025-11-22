@@ -52,6 +52,12 @@ const PageConfig = masterSequelize.define('page_config', {
     allowNull: false,
     defaultValue: false
   },
+  download_row_limit: {
+    // Optional cap on how many rows can be downloaded at once
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    defaultValue: null
+  },
   default_sort_json: {
     // JSON string: { field, order }
     type: DataTypes.TEXT,

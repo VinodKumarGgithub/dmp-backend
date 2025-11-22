@@ -22,6 +22,28 @@ function escapeIdentifier(sequelize, identifier) {
   return identifier;
 }
 
+function parsePositiveInt(value) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const parsed = parseInt(value, 10);
+  if (Number.isNaN(parsed) || parsed <= 0) {
+    return null;
+  }
+  return parsed;
+}
+
+function getSelectLimitClauses(sequelize, limit) {
+  if (!sequelize || !limit) {
+    return { selectPrefix: '', limitSuffix: '' };
+  }
+  const dialect = sequelize.getDialect();
+  if (dialect === 'mssql') {
+    return { selectPrefix: `TOP (${limit}) `, limitSuffix: '' };
+  }
+  return { selectPrefix: '', limitSuffix: ` LIMIT ${limit}` };
+}
+
 function parseJsonField(text, fallback) {
   if (!text) return fallback;
   try {
@@ -35,7 +57,7 @@ const pageService = {
   async listPages() {
     try {
       const pages = await PageConfig.findAll({
-        attributes: ['page_key', 'title', 'is_download_allowed']
+        attributes: ['page_key', 'title', 'is_download_allowed', 'download_row_limit']
       });
       return pages;
     } catch (error) {
@@ -67,6 +89,7 @@ const pageService = {
           searchable_fields: parseJsonField(page.searchable_fields_json, []),
           filterable_fields: parseJsonField(page.filterable_fields_json, []),
           is_download_allowed: page.is_download_allowed,
+          download_row_limit: page.download_row_limit,
           default_sort: parseJsonField(page.default_sort_json, null),
           page_size_default: page.page_size_default
         };
@@ -639,6 +662,7 @@ const pageService = {
 
     const tenantSequelize = reqDb.sequelize;
     const { source_type = 'TABLE', source_params = [], data_source } = config;
+    const downloadLimit = parsePositiveInt(config.download_row_limit);
 
     // Handle PROCEDURE type
     if (source_type === 'PROCEDURE') {
@@ -690,6 +714,9 @@ const pageService = {
         // Apply in-memory filtering, search, and sorting (same as getPageData but without pagination)
         processedData = this.applyInMemoryFilters(processedData, config, queryParams);
         processedData = processedData?.length > 0 ? [...Object.values(processedData[0])] : [];
+        if (downloadLimit && Array.isArray(processedData)) {
+          processedData = processedData.slice(0, downloadLimit);
+        }
 
         return { data: processedData };
       } catch (error) {
@@ -721,6 +748,9 @@ const pageService = {
       
       // Apply in-memory filtering, search, and sorting (same as getPageData but without pagination)
       processedData = this.applyInMemoryFilters(processedData, config, queryParams);
+      if (downloadLimit && Array.isArray(processedData)) {
+        processedData = processedData.slice(0, downloadLimit);
+      }
       
       return { data: processedData };
     }
@@ -752,6 +782,7 @@ const pageService = {
       : [];
 
     try {
+      const { selectPrefix, limitSuffix } = getSelectLimitClauses(tenantSequelize, downloadLimit);
       // Build SQL query - use specific columns if provided, otherwise use *
       // Use same conditions from buildQuery (whereClause, orderBy, replacements) - no pagination
       // Escape column names to handle reserved keywords
@@ -760,7 +791,7 @@ const pageService = {
         const escapedColumns = colNames.map(col => escapeIdentifier(tenantSequelize, col));
         selectColumns = escapedColumns.join(', ');
       }
-      const dataSql = `SELECT ${selectColumns} FROM ${queryDataSource} ${whereClause} ${orderBy}`;
+      const dataSql = `SELECT ${selectPrefix}${selectColumns} FROM ${queryDataSource} ${whereClause} ${orderBy}${limitSuffix}`;
 
       // Execute query using req.db.sequelize.query to get all data
       // Sequelize query returns [results, metadata], so we destructure to get the results
@@ -770,7 +801,10 @@ const pageService = {
       });
 
       // dataRows is already an array of row objects
-      const data = Array.isArray(dataRows) ? dataRows : [];
+      let data = Array.isArray(dataRows) ? dataRows : [];
+      if (downloadLimit && data.length > downloadLimit) {
+        data = data.slice(0, downloadLimit);
+      }
 
       return { data };
     } catch (error) {

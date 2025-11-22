@@ -46,6 +46,7 @@ const pageConfigService = {
         .min(0)
         .required(),
       is_download_allowed: Joi.boolean().default(false),
+      download_row_limit: Joi.number().integer().min(1).max(1000000).allow(null).optional(),
       default_sort: Joi.object({
         field: Joi.string().required(),
         order: Joi.string().valid('ASC', 'DESC').default('ASC'),
@@ -79,6 +80,7 @@ const pageConfigService = {
           searchable_fields_json: JSON.stringify(data.searchable_fields),
           filterable_fields_json: JSON.stringify(data.filterable_fields),
           is_download_allowed: data.is_download_allowed,
+          download_row_limit: data.download_row_limit ?? null,
           default_sort_json: data.default_sort ? JSON.stringify(data.default_sort) : null,
           page_size_default: data.page_size_default,
         },
@@ -130,6 +132,7 @@ const pageConfigService = {
         )
         .min(0),
       is_download_allowed: Joi.boolean(),
+      download_row_limit: Joi.number().integer().min(1).max(1000000).allow(null),
       default_sort: Joi.object({
         field: Joi.string().required(),
         order: Joi.string().valid('ASC', 'DESC').default('ASC'),
@@ -160,6 +163,7 @@ const pageConfigService = {
       if (data.filterable_fields !== undefined)
         updateData.filterable_fields_json = JSON.stringify(data.filterable_fields);
       if (data.is_download_allowed !== undefined) updateData.is_download_allowed = data.is_download_allowed;
+      if (data.download_row_limit !== undefined) updateData.download_row_limit = data.download_row_limit ?? null;
       if (data.default_sort !== undefined)
         updateData.default_sort_json = data.default_sort ? JSON.stringify(data.default_sort) : null;
       if (data.page_size_default !== undefined) updateData.page_size_default = data.page_size_default;

@@ -10,6 +10,7 @@ INSERT INTO page_configs (
   searchable_fields_json,
   filterable_fields_json,
   is_download_allowed,
+  download_row_limit,
   default_sort_json,
   page_size_default
 ) VALUES (
@@ -31,6 +32,7 @@ INSERT INTO page_configs (
     {"name": "patient_id", "label": "Patient ID", "type": "text"}
   ]',
   true,
+  5000,
   '{"field": "created_at", "order": "DESC"}',
   20
 );
@@ -45,6 +47,7 @@ INSERT INTO page_configs (
   searchable_fields_json,
   filterable_fields_json,
   is_download_allowed,
+  download_row_limit,
   default_sort_json,
   page_size_default
 ) VALUES (
@@ -66,6 +69,7 @@ INSERT INTO page_configs (
     {"name": "status", "label": "Status", "type": "select", "options": ["ACTIVE", "INACTIVE", "SUSPENDED"]}
   ]',
   true,
+  NULL,
   '{"field": "id", "order": "ASC"}',
   25
 );
