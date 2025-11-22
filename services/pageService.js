@@ -580,15 +580,26 @@ const pageService = {
         // For filtered queries, we still use metadata (approximate is better than expensive COUNT)
         let total = 0;
         try {
-          const metadataCount = await dbMetadataService.getTableRowCount(tenantSequelize, queryDataSource, source_type);
+          if (whereClause) {
+            const countSql = `SELECT count(*) as count ${baseSql}`;
+
+            // Execute data query
+            let resCount = await tenantSequelize.query(countSql, {
+              replacements: { ...replacements },
+              type: tenantSequelize.QueryTypes.SELECT,
+            });
+            total = resCount.length>0 ? resCount[0]?.count : 0;
+          }
+          if(total <= 0){
+          const metadataCount = await dbMetadataService.getTableRowCount(
+            tenantSequelize,
+            queryDataSource,
+            source_type
+          );
           if (metadataCount !== null) {
             total = metadataCount;
-          } else {
-            // For views/procedures or when metadata not available, use a large default
-            // This allows pagination to work, though total may be approximate
-            // Frontend will handle "showing X-Y of many" appropriately
-            total = 1000000; // Large default to indicate "many" records
           }
+        }
         } catch (metadataError) {
           // If metadata query fails, use large default
           total = 1000000;
