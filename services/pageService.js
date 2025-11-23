@@ -1,7 +1,9 @@
-const { fromCode } = require('../utils/errors');
+const { fromCode, createErrorWithContext, getColumnSuggestions } = require('../utils/errors');
 const { mapDbError } = require('../utils/dbErrorMapper');
 const { PageConfig } = require('../models/PageConfig');
 const { dbMetadataService } = require('./dbMetadataService');
+const { validateProcedureSql } = require('../utils/sqlSecurity');
+const crypto = require('crypto');
 
 /**
  * Escape column/identifier names to handle reserved keywords
@@ -188,6 +190,156 @@ function extractProcedureSql(sourceParams = []) {
   return { baseSql, remainingParams };
 }
 
+/**
+ * Hash SQL query for audit logging (SHA-256)
+ */
+function hashSql(sql) {
+  if (!sql || typeof sql !== 'string') {
+    return null;
+  }
+  return crypto.createHash('sha256').update(sql).digest('hex');
+}
+
+function splitSelectList(selectClause = '') {
+  const parts = [];
+  let current = '';
+  let depth = 0;
+  let inSingle = false;
+  let inDouble = false;
+  for (let i = 0; i < selectClause.length; i += 1) {
+    const char = selectClause[i];
+    if (char === "'" && !inDouble) {
+      inSingle = !inSingle;
+    } else if (char === '"' && !inSingle) {
+      inDouble = !inDouble;
+    } else if (!inSingle && !inDouble) {
+      if (char === '(') depth += 1;
+      if (char === ')') depth = Math.max(depth - 1, 0);
+      if (char === ',' && depth === 0) {
+        parts.push(current.trim());
+        current = '';
+        continue;
+      }
+    }
+    current += char;
+  }
+  if (current.trim()) {
+    parts.push(current.trim());
+  }
+  return parts;
+}
+
+function stripIdentifierQuotes(identifier = '') {
+  return identifier.replace(/^[`"'[]+|[`"'\]]+$/g, '');
+}
+
+function parseSelectAlias(part = '') {
+  if (!part) return null;
+  let expression = part;
+  let alias = '';
+  const asMatch = part.match(/\s+AS\s+([`"'[]?[\w]+[`"'\]]?)$/i);
+  if (asMatch) {
+    alias = stripIdentifierQuotes(asMatch[1]);
+    expression = part.slice(0, asMatch.index).trim();
+  } else {
+    const tokens = part.split(/\s+/);
+    if (tokens.length > 1) {
+      alias = stripIdentifierQuotes(tokens[tokens.length - 1]);
+      expression = tokens.slice(0, -1).join(' ');
+    } else {
+      alias = stripIdentifierQuotes(expression);
+    }
+  }
+  const qualifiedMatch = expression.match(/([`"'[]?[\w]+[`"'\]]?)\s*\.\s*([`"'[]?[\w]+[`"'\]]?)/);
+  const qualified = qualifiedMatch
+    ? `${stripIdentifierQuotes(qualifiedMatch[1])}.${stripIdentifierQuotes(qualifiedMatch[2])}`
+    : null;
+  return { alias: alias.toLowerCase(), qualified };
+}
+
+function buildAliasMapFromSql(sql) {
+  const map = new Map();
+  if (!sql || typeof sql !== 'string') return map;
+  const normalized = stripTrailingSemicolon(sql);
+  const selectMatch = normalized.match(/select\s+([\s\S]+?)\s+from\s/i);
+  if (!selectMatch) return map;
+  const selectClause = selectMatch[1];
+  const parts = splitSelectList(selectClause);
+  parts.forEach((part) => {
+    const info = parseSelectAlias(part);
+    if (info && info.alias && info.qualified) {
+      map.set(info.alias, info.qualified);
+    }
+  });
+  return map;
+}
+
+function inferDataTypeFromValue(value) {
+  if (value === null || value === undefined) {
+    return 'string';
+  }
+  if (value instanceof Date) {
+    return 'date';
+  }
+  if (typeof value === 'number') {
+    return 'number';
+  }
+  if (typeof value === 'boolean') {
+    return 'boolean';
+  }
+  // Attempt to detect ISO date strings
+  if (typeof value === 'string') {
+    const date = Date.parse(value);
+    if (!Number.isNaN(date)) {
+      return 'date';
+    }
+  }
+  return 'string';
+}
+
+function inferDataTypeFromField(field = {}) {
+  const rawType = (field.type || field.dataType || '').toString().toLowerCase();
+  if (rawType.includes('int') || rawType.includes('decimal') || rawType.includes('numeric') || rawType.includes('float') || rawType.includes('double')) {
+    return 'number';
+  }
+  if (rawType.includes('date') || rawType.includes('time')) {
+    return 'date';
+  }
+  if (rawType.includes('bool')) {
+    return 'boolean';
+  }
+  return 'string';
+}
+
+/**
+ * Log query execution to audit log (async, non-blocking)
+ */
+async function logQueryExecution(auditData) {
+  try {
+    const { QueryAuditLog } = require('../models/QueryAuditLog');
+    const { generateId } = require('../utils/idGenerator');
+    
+    const logEntry = {
+      id: generateId('audit'),
+      page_key: auditData.pageKey,
+      tenant_id: auditData.tenantId,
+      user_id: auditData.userId,
+      ip_address: auditData.ipAddress,
+      sql_hash: auditData.sqlHash,
+      execution_time_ms: auditData.executionTime,
+      rows_returned: auditData.rowsReturned,
+      success: auditData.success,
+      error_message: auditData.errorMessage,
+      query_params: auditData.queryParams ? JSON.stringify(auditData.queryParams) : null
+    };
+
+    await QueryAuditLog.create(logEntry);
+  } catch (error) {
+    // Don't throw - audit logging failures shouldn't break the main flow
+    console.error('Failed to log query execution:', error);
+  }
+}
+
 function applyPaginationClause(sql, limit, offset, sequelize, replacements = {}, keyPrefix = 'proc') {
   if (!Number.isFinite(limit) || limit <= 0) {
     return { sql, replacements: { ...replacements } };
@@ -316,6 +468,16 @@ const pageService = {
 
     const where = [];
     const replacements = {};
+    const createParamKey = (prefix, identifier) => {
+      const sanitizedIdentifier = (identifier || '').replace(/[^a-zA-Z0-9_]/g, '_') || 'field';
+      const baseKey = `${prefix}${sanitizedIdentifier}`;
+      let key = baseKey;
+      let counter = 1;
+      while (Object.prototype.hasOwnProperty.call(replacements, key)) {
+        key = `${baseKey}_${counter++}`;
+      }
+      return key;
+    };
 
     // Search across configured searchable fields (or all columns if not configured for VIEWs)
     if (search && typeof search === 'string' && search.trim()) {
@@ -366,7 +528,7 @@ const pageService = {
         const value = queryParams[f.name];
         if (value === undefined || value === null || value === '') return;
 
-        const paramKey = `f_${f.name}`;
+        const paramKey = createParamKey('f_', f.name);
         const escapedField = sequelize ? escapeIdentifier(sequelize, f.name) : f.name;
         switch (f.type) {
           case 'text':
@@ -432,6 +594,18 @@ const pageService = {
 
     if (!resolvedBaseSql) {
       throw fromCode('PAGE_CONFIG_INVALID', ['Procedure configuration must include a p_sql parameter']);
+    }
+
+    // Security validation: validate p_sql is safe and read-only
+    try {
+      validateProcedureSql(resolvedBaseSql, {
+        checkReadOnly: true,
+        checkComplexity: true,
+        maxTimeout: 30000
+      });
+    } catch (validationError) {
+      // Re-throw validation errors as-is
+      throw validationError;
     }
 
     const {
@@ -698,6 +872,86 @@ const pageService = {
   },
 
   /**
+   * Detect columns by executing provided SQL with LIMIT/TOP 1
+   */
+  async detectColumnsFromSql(pSql, sequelize) {
+    if (!sequelize) {
+      throw fromCode('TENANT_DB_NOT_AVAILABLE');
+    }
+
+    const trimmedSql = stripTrailingSemicolon(pSql || '').trim();
+    if (!trimmedSql) {
+      throw fromCode('PAGE_CONFIG_INVALID', ['p_sql is required for column detection']);
+    }
+
+    // Validate SQL safety
+    validateProcedureSql(trimmedSql, {
+      checkReadOnly: true,
+      checkComplexity: true,
+      maxTimeout: 30000
+    });
+
+    const dialect = sequelize.getDialect();
+    const detectionQuery = dialect === 'mssql'
+      ? `SELECT TOP 1 * FROM (${trimmedSql}) AS detection_subquery`
+      : `SELECT * FROM (${trimmedSql}) AS detection_subquery LIMIT 1`;
+    const aliasMap = buildAliasMapFromSql(trimmedSql);
+
+    try {
+      const startTime = Date.now();
+      const [results, metadata] = await sequelize.query(detectionQuery, {
+        logging: false,
+        raw: true
+      });
+
+      const rows = Array.isArray(results) ? results : [];
+      let columns = [];
+
+      if (rows.length > 0) {
+        const sampleRow = rows[0];
+        columns = Object.keys(sampleRow).map((colName) => {
+          const qualified = aliasMap.get(colName.toLowerCase());
+          return {
+            name: qualified || colName,
+            type: inferDataTypeFromValue(sampleRow[colName]),
+            nullable: sampleRow[colName] === null || sampleRow[colName] === undefined
+          };
+        });
+      } else if (metadata && Array.isArray(metadata.fields)) {
+        columns = metadata.fields
+          .map((field) => {
+            const name = field.name || field.orgName || field.columnName;
+            if (!name) {
+              return null;
+            }
+            return {
+              name: aliasMap.get(name.toLowerCase()) || name,
+              type: inferDataTypeFromField(field),
+              nullable: field.nullable !== undefined ? field.nullable : true
+            };
+          })
+          .filter(Boolean);
+      }
+
+      if (columns.length === 0) {
+        throw fromCode('PAGE_QUERY_ERROR', ['Could not detect columns from SQL query. Ensure the query returns data.']);
+      }
+
+      const executionTime = Date.now() - startTime;
+      return { columns, executionTime };
+    } catch (error) {
+      const enhancedError = createErrorWithContext(error, {
+        sql: detectionQuery,
+        replacements: {},
+        executionTime: null,
+        pageKey: null,
+        sourceType: 'PROCEDURE'
+      });
+      throw enhancedError;
+    }
+  },
+
+  /**
    * Select only specified columns from result set
    */
   selectColumns(data, columns) {
@@ -710,6 +964,23 @@ const pageService = {
       return data;
     }
 
+    const getPossibleKeys = (colName) => {
+      if (!colName) return [];
+      const keys = [colName];
+      const stripped = stripIdentifierQuotes(colName);
+      if (stripped !== colName) {
+        keys.push(stripped);
+      }
+      if (stripped.includes('.')) {
+        const lastSegment = stripped.split('.').pop();
+        keys.push(lastSegment);
+      } else if (colName.includes('.')) {
+        const lastSegment = colName.split('.').pop();
+        keys.push(lastSegment);
+      }
+      return Array.from(new Set(keys.filter(Boolean)));
+    };
+
     const colNames = columns.map((c) => c && c.name).filter(Boolean);
     if (colNames.length === 0) {
       return data;
@@ -718,15 +989,20 @@ const pageService = {
     return data.map(row => {
       const selectedRow = {};
       colNames.forEach(colName => {
-        if (row.hasOwnProperty(colName)) {
-          selectedRow[colName] = row[colName];
+        const possibleKeys = getPossibleKeys(colName);
+        for (let i = 0; i < possibleKeys.length; i += 1) {
+          const key = possibleKeys[i];
+          if (Object.prototype.hasOwnProperty.call(row, key)) {
+            selectedRow[colName] = row[key];
+            break;
+          }
         }
       });
       return selectedRow;
     });
   },
 
-  async getPageData(config, queryParams, reqDb) {
+  async getPageData(config, queryParams, reqDb, auditContext = {}) {
     // reqDb should be { sequelize, models, tenantId } from tenantResolver middleware
     if (!reqDb || !reqDb.sequelize) {
       throw fromCode('TENANT_DB_NOT_AVAILABLE');
@@ -747,10 +1023,52 @@ const pageService = {
             { extraRows: 1 },
             baseSql
           );
-          const dataRows = await tenantSequelize.query(procedureQuery.sql, {
-            replacements: procedureQuery.replacements,
-            type: tenantSequelize.QueryTypes.SELECT
-          });
+          
+          // Audit logging: track query execution
+          const startTime = Date.now();
+          let executionSuccess = true;
+          let errorMessage = null;
+          let dataRows = [];
+          
+          try {
+            dataRows = await tenantSequelize.query(procedureQuery.sql, {
+              replacements: procedureQuery.replacements,
+              type: tenantSequelize.QueryTypes.SELECT,
+              timeout: 30000 // 30 second timeout
+            });
+          } catch (queryError) {
+            executionSuccess = false;
+            errorMessage = queryError.message || String(queryError);
+            
+            // Enhance error with query context
+            const executionTime = Date.now() - startTime;
+            const enhancedError = createErrorWithContext(queryError, {
+              sql: procedureQuery.sql,
+              replacements: procedureQuery.replacements,
+              executionTime,
+              pageKey: config.page_key,
+              sourceType: 'PROCEDURE'
+            });
+            
+            throw enhancedError;
+          } finally {
+            // Log query execution (non-blocking)
+            const executionTime = Date.now() - startTime;
+            logQueryExecution({
+              pageKey: config.page_key,
+              tenantId: reqDb.tenantId,
+              userId: auditContext.userId,
+              ipAddress: auditContext.ipAddress,
+              sqlHash: hashSql(procedureQuery.sql),
+              executionTime,
+              rowsReturned: Array.isArray(dataRows) ? dataRows.length : 0,
+              success: executionSuccess,
+              errorMessage,
+              queryParams: Object.keys(queryParams).length > 0 ? queryParams : null
+            }).catch(() => {
+              // Ignore audit logging errors
+            });
+          }
 
           let data = Array.isArray(dataRows) ? dataRows : [];
           data = this.selectColumns(data, config.columns);
@@ -953,7 +1271,7 @@ const pageService = {
   },
 
   // Get all page data without pagination (for downloads)
-  async getAllPageData(config, queryParams, reqDb) {
+  async getAllPageData(config, queryParams, reqDb, auditContext = {}) {
     // reqDb should be { sequelize, models, tenantId } from tenantResolver middleware
     if (!reqDb || !reqDb.sequelize) {
       throw fromCode('TENANT_DB_NOT_AVAILABLE');
@@ -980,10 +1298,40 @@ const pageService = {
             },
             baseSql
           );
-          const dataRows = await tenantSequelize.query(procedureQuery.sql, {
-            replacements: procedureQuery.replacements,
-            type: tenantSequelize.QueryTypes.SELECT
-          });
+          
+          // Audit logging for download queries
+          const startTime = Date.now();
+          let executionSuccess = true;
+          let errorMessage = null;
+          let dataRows = [];
+          
+          try {
+            dataRows = await tenantSequelize.query(procedureQuery.sql, {
+              replacements: procedureQuery.replacements,
+              type: tenantSequelize.QueryTypes.SELECT,
+              timeout: 30000
+            });
+          } catch (queryError) {
+            executionSuccess = false;
+            errorMessage = queryError.message || String(queryError);
+            throw queryError;
+          } finally {
+            const executionTime = Date.now() - startTime;
+            logQueryExecution({
+              pageKey: config.page_key,
+              tenantId: reqDb.tenantId,
+              userId: auditContext.userId,
+              ipAddress: auditContext.ipAddress,
+              sqlHash: hashSql(procedureQuery.sql),
+              executionTime,
+              rowsReturned: Array.isArray(dataRows) ? dataRows.length : 0,
+              success: executionSuccess,
+              errorMessage,
+              queryParams: Object.keys(queryParams).length > 0 ? queryParams : null
+            }).catch(() => {
+              // Ignore audit logging errors
+            });
+          }
 
           if (!Array.isArray(dataRows)) {
             return { data: [] };

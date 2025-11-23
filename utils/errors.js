@@ -24,6 +24,12 @@ const ERROR_CATALOG = {
   PAGE_CONFIG_INVALID: { message: 'Page configuration is invalid or corrupted', status: 400 },
   PAGE_QUERY_ERROR: { message: 'Failed to execute page data query', status: 400 },
   TENANT_DB_NOT_AVAILABLE: { message: 'Tenant database not available', status: 502 },
+  RATE_LIMIT_EXCEEDED: { message: 'Rate limit exceeded', status: 429 },
+  UNSUPPORTED_DIALECT: { message: 'Unsupported database dialect', status: 400 },
+  DB_SYNTAX_ERROR: { message: 'Database query syntax error', status: 400 },
+  DB_UNKNOWN_COLUMN: { message: 'Referenced column does not exist', status: 400 },
+  DB_UNKNOWN_TABLE: { message: 'Referenced table or view does not exist', status: 400 },
+  DB_QUERY_ERROR: { message: 'Database query failed', status: 400 },
 };
 
 function createError(code, message, status, details) {
@@ -44,6 +50,225 @@ function fromCode(code, details) {
   return err;
 }
 
-module.exports = { createError, fromCode, ERROR_CATALOG };
+/**
+ * Sanitize SQL query for error display (remove sensitive data)
+ */
+function sanitizeSqlForError(sql, replacements = {}) {
+  if (!sql || typeof sql !== 'string') {
+    return null;
+  }
+
+  let sanitized = sql;
+
+  // Replace parameter values with placeholders
+  if (replacements && typeof replacements === 'object') {
+    Object.keys(replacements).forEach(key => {
+      const value = replacements[key];
+      // Only replace if it's a string or number (not null/undefined)
+      if (value !== null && value !== undefined) {
+        const regex = new RegExp(`:${key}\\b`, 'g');
+        sanitized = sanitized.replace(regex, `:${key}/*value*/`);
+      }
+    });
+  }
+
+  // Truncate very long queries
+  const maxLength = 2000;
+  if (sanitized.length > maxLength) {
+    sanitized = sanitized.substring(0, maxLength) + '... [truncated]';
+  }
+
+  return sanitized;
+}
+
+/**
+ * Categorize database errors
+ */
+function categorizeError(error) {
+  if (!error || !error.message) {
+    return { category: 'unknown', type: 'UNKNOWN_ERROR' };
+  }
+
+  const message = error.message.toLowerCase();
+  const originalMessage = error.message;
+
+  // Syntax errors
+  if (message.includes('syntax') || message.includes('parse') || message.includes('invalid sql')) {
+    return { category: 'syntax', type: 'SQL_SYNTAX_ERROR', lineNumber: extractLineNumber(originalMessage) };
+  }
+
+  // Column not found
+  if (message.includes('unknown column') || message.includes("column doesn't exist") || 
+      message.includes('invalid column name') || message.includes('column') && message.includes('not found')) {
+    return { category: 'data', type: 'COLUMN_NOT_FOUND', column: extractColumnName(originalMessage) };
+  }
+
+  // Table/view not found
+  if (message.includes('table') && (message.includes("doesn't exist") || message.includes('not found')) ||
+      message.includes('object') && message.includes('not found')) {
+    return { category: 'data', type: 'TABLE_NOT_FOUND' };
+  }
+
+  // Permission errors
+  if (message.includes('permission') || message.includes('access denied') || 
+      message.includes('forbidden') || message.includes('unauthorized')) {
+    return { category: 'permission', type: 'PERMISSION_DENIED' };
+  }
+
+  // Timeout errors
+  if (message.includes('timeout') || message.includes('timed out') || 
+      message.includes('exceeded') && message.includes('time')) {
+    return { category: 'timeout', type: 'QUERY_TIMEOUT' };
+  }
+
+  // Connection errors
+  if (message.includes('connection') || message.includes('connect') || 
+      message.includes('network') || message.includes('econnrefused')) {
+    return { category: 'connection', type: 'CONNECTION_ERROR' };
+  }
+
+  return { category: 'data', type: 'DATABASE_ERROR' };
+}
+
+/**
+ * Extract line number from SQL error message
+ */
+function extractLineNumber(message) {
+  const match = message.match(/line\s+(\d+)/i) || message.match(/at\s+line\s+(\d+)/i);
+  return match ? parseInt(match[1], 10) : null;
+}
+
+/**
+ * Extract column name from error message
+ */
+function extractColumnName(message) {
+  const match = message.match(/['"`]([^'"`]+)['"`]/) || message.match(/column\s+['"`]?([^'"`\s]+)['"`]?/i);
+  return match ? match[1] : null;
+}
+
+/**
+ * Create enhanced error with query context
+ */
+function createErrorWithContext(error, context = {}) {
+  const {
+    sql,
+    replacements,
+    executionTime,
+    pageKey,
+    sourceType
+  } = context;
+
+  const categorized = categorizeError(error);
+  const sanitizedSql = sql ? sanitizeSqlForError(sql, replacements) : null;
+
+  // Create enhanced error
+  const enhancedError = {
+    ...error,
+    queryContext: {
+      category: categorized.category,
+      type: categorized.type,
+      lineNumber: categorized.lineNumber,
+      column: categorized.column,
+      sanitizedSql: sanitizedSql,
+      executionTime,
+      pageKey,
+      sourceType
+    }
+  };
+
+  return enhancedError;
+}
+
+/**
+ * Get column suggestions for "column not found" errors
+ */
+function getColumnSuggestions(error, availableColumns = []) {
+  if (!error || !error.queryContext || error.queryContext.type !== 'COLUMN_NOT_FOUND') {
+    return [];
+  }
+
+  const missingColumn = error.queryContext.column;
+  if (!missingColumn || !Array.isArray(availableColumns) || availableColumns.length === 0) {
+    return [];
+  }
+
+  // Find similar column names (fuzzy match)
+  const suggestions = availableColumns
+    .map(col => {
+      const colName = typeof col === 'string' ? col : (col.name || col);
+      if (!colName) return null;
+
+      // Exact match (case insensitive)
+      if (colName.toLowerCase() === missingColumn.toLowerCase()) {
+        return { name: colName, score: 100 };
+      }
+
+      // Contains match
+      if (colName.toLowerCase().includes(missingColumn.toLowerCase()) || 
+          missingColumn.toLowerCase().includes(colName.toLowerCase())) {
+        return { name: colName, score: 50 };
+      }
+
+      // Levenshtein distance (simple version)
+      const distance = levenshteinDistance(colName.toLowerCase(), missingColumn.toLowerCase());
+      const maxLength = Math.max(colName.length, missingColumn.length);
+      const similarity = maxLength > 0 ? (1 - distance / maxLength) * 100 : 0;
+
+      if (similarity > 60) {
+        return { name: colName, score: similarity };
+      }
+
+      return null;
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 5)
+    .map(s => s.name);
+
+  return suggestions;
+}
+
+/**
+ * Simple Levenshtein distance calculation
+ */
+function levenshteinDistance(str1, str2) {
+  const matrix = [];
+  const len1 = str1.length;
+  const len2 = str2.length;
+
+  for (let i = 0; i <= len1; i++) {
+    matrix[i] = [i];
+  }
+
+  for (let j = 0; j <= len2; j++) {
+    matrix[0][j] = j;
+  }
+
+  for (let i = 1; i <= len1; i++) {
+    for (let j = 1; j <= len2; j++) {
+      if (str1[i - 1] === str2[j - 1]) {
+        matrix[i][j] = matrix[i - 1][j - 1];
+      } else {
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j] + 1,
+          matrix[i][j - 1] + 1,
+          matrix[i - 1][j - 1] + 1
+        );
+      }
+    }
+  }
+
+  return matrix[len1][len2];
+}
+
+module.exports = { 
+  createError, 
+  fromCode, 
+  ERROR_CATALOG,
+  sanitizeSqlForError,
+  categorizeError,
+  createErrorWithContext,
+  getColumnSuggestions
+};
 
 

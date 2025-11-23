@@ -17,6 +17,11 @@ function errorHandler(err, req, res, next) {
     response.error.details = err.details;
   }
 
+  // Include query context if available (for enhanced error messages)
+  if (err.queryContext) {
+    response.error.queryContext = err.queryContext;
+  }
+
   res.status(status).json(response);
 }
 

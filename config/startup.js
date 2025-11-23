@@ -5,7 +5,7 @@ const { logger } = require('./logger');
 async function testMasterDbConnection() {
   try {
     await masterSequelize.authenticate();
-    await masterSequelize.sync();
+    await masterSequelize.sync({ alter: true });
     logger.info('✅ Master DB connection established successfully.');
   } catch (err) {
     console.error(err)
