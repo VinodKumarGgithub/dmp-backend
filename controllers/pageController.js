@@ -4,13 +4,32 @@ const { pageConfigService } = require('../services/pageConfigService');
 const { dbMetadataService } = require('../services/dbMetadataService');
 const { masterSequelize } = require('../config/db');
 const { fromCode } = require('../utils/errors');
+const { assertUserHasPageAccess, getUserPermissions } = require('../services/userPermissionService');
 
 module.exports = {
   // GET /api/pages
   async listPages(req, res, next) {
     try {
       const pages = await pageService.listPages();
-      res.json(success(pages, 'Pages fetched successfully'));
+      const role = req.user?.role;
+      if (role === 'ADMIN' || role === 'MANAGER') {
+        return res.json(success(pages, 'Pages fetched successfully'));
+      }
+
+      const userId = req.user?.userId || req.user?.id;
+      if (!userId) {
+        return res.json(success([], 'Pages fetched successfully'));
+      }
+
+      const permissions = await getUserPermissions(userId);
+      const allowedPageKeys = Array.isArray(permissions.pages) ? permissions.pages : [];
+
+      if (allowedPageKeys.length === 0) {
+        return res.json(success(pages, 'Pages fetched successfully'));
+      }
+
+      const filteredPages = pages.filter((page) => allowedPageKeys.includes(page.page_key));
+      res.json(success(filteredPages, 'Pages fetched successfully'));
     } catch (err) {
       next(err);
     }
@@ -67,6 +86,7 @@ module.exports = {
         return next(fromCode('TENANT_DB_NOT_AVAILABLE'));
       }
       const config = await pageService.getPageConfigByKey(pageKey);
+      await assertUserHasPageAccess(req.user, req.db?.tenantId, config.page_key);
       // Pass req.db directly to use tenant database connection
       // Include audit context for logging
       const auditContext = {
@@ -88,6 +108,7 @@ module.exports = {
         return next(fromCode('TENANT_DB_NOT_AVAILABLE'));
       }
       const config = await pageService.getPageConfigByKey(pageKey);
+      await assertUserHasPageAccess(req.user, req.db?.tenantId, config.page_key);
       // Pass req.db directly to use tenant database connection
       // Include audit context for logging
       const auditContext = {
@@ -113,6 +134,7 @@ module.exports = {
       if (!config.is_download_allowed) {
         return next(fromCode('PAGE_DOWNLOAD_NOT_ALLOWED'));
       }
+      await assertUserHasPageAccess(req.user, req.db?.tenantId, config.page_key);
 
       // Use getAllPageData to fetch ALL data without pagination for download
       // Include audit context for logging

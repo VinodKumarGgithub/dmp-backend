@@ -2,7 +2,7 @@ const { DataTypes } = require('sequelize');
 const { masterSequelize } = require('../config/db');
 
 // Admin users in master DB to control tenant registry
-const AdminUser = masterSequelize.define('admin_user', {
+const AdminUser = masterSequelize.define('master_user', {
   id: {
     type: DataTypes.INTEGER,
     autoIncrement: true,
@@ -33,7 +33,7 @@ const AdminUser = masterSequelize.define('admin_user', {
     defaultValue: DataTypes.NOW
   }
 }, {
-  tableName: 'admin_users',
+  tableName: 'master_users',
   timestamps: false
 });
 
