@@ -1004,7 +1004,9 @@ const pageService = {
         replacements: {},
         executionTime: null,
         pageKey: null,
-        sourceType: 'PROCEDURE'
+        sourceType: 'PROCEDURE',
+        dataSource: null,
+        queryParams: null
       });
       throw enhancedError;
     }
@@ -1112,7 +1114,9 @@ const pageService = {
               replacements: procedureQuery.replacements,
               executionTime,
               pageKey: config.page_key,
-              sourceType: 'PROCEDURE'
+              sourceType: 'PROCEDURE',
+              dataSource: data_source,
+              queryParams
             });
             
             throw enhancedError;
@@ -1351,7 +1355,9 @@ const pageService = {
             replacements: { ...replacements, limit, offset },
             executionTime: Date.now() - startTime,
             pageKey: config.page_key,
-            sourceType: source_type
+            sourceType: source_type,
+            dataSource: data_source,
+            queryParams
           });
           throw enhancedError;
         } finally {

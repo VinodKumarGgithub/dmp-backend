@@ -155,11 +155,16 @@ function createErrorWithContext(error, context = {}) {
     replacements,
     executionTime,
     pageKey,
-    sourceType
+    sourceType,
+    dataSource,
+    queryParams
   } = context;
 
   const categorized = categorizeError(error);
   const sanitizedSql = sql ? sanitizeSqlForError(sql, replacements) : null;
+
+  // Generate helpful hints based on error type
+  const hints = generateErrorHints(categorized, { pageKey, sourceType, dataSource, queryParams });
 
   // Create enhanced error
   const enhancedError = {
@@ -172,11 +177,74 @@ function createErrorWithContext(error, context = {}) {
       sanitizedSql: sanitizedSql,
       executionTime,
       pageKey,
-      sourceType
+      sourceType,
+      dataSource,
+      queryParams: queryParams ? JSON.stringify(queryParams) : null,
+      hints
     }
   };
 
   return enhancedError;
+}
+
+/**
+ * Generate helpful hints based on error type and context
+ */
+function generateErrorHints(categorized, context = {}) {
+  const { pageKey, sourceType, dataSource, queryParams } = context;
+  const hints = [];
+
+  switch (categorized.type) {
+    case 'SQL_SYNTAX_ERROR':
+      hints.push('Check for missing commas, parentheses, or quotes in your SQL query.');
+      hints.push('Verify that all table and column names are correctly spelled.');
+      if (categorized.lineNumber) {
+        hints.push(`Error detected near line ${categorized.lineNumber}. Review the SQL around this line.`);
+      }
+      break;
+
+    case 'COLUMN_NOT_FOUND':
+      hints.push(`The column "${categorized.column}" does not exist in the data source.`);
+      hints.push('Check if the column name is correct or if it needs a table alias prefix (e.g., `table.column`).');
+      if (sourceType === 'PROCEDURE') {
+        hints.push('For procedure-based pages, ensure the column exists in the SELECT statement of your p_sql.');
+      }
+      break;
+
+    case 'TABLE_NOT_FOUND':
+      hints.push(`The table or view "${dataSource || 'specified'}" does not exist.`);
+      hints.push('Verify the table name is correct and accessible in the current database.');
+      if (sourceType === 'PROCEDURE') {
+        hints.push('For procedure-based pages, check that all tables in your p_sql exist.');
+      }
+      break;
+
+    case 'QUERY_TIMEOUT':
+      hints.push('The query took too long to execute. Consider:');
+      hints.push('- Adding or refining filters to reduce the dataset size');
+      hints.push('- Checking if indexes exist on filtered columns');
+      hints.push('- Optimizing the underlying SQL query');
+      break;
+
+    case 'PERMISSION_DENIED':
+      hints.push('You do not have permission to access this resource.');
+      hints.push('Contact your administrator to request access.');
+      break;
+
+    case 'CONNECTION_ERROR':
+      hints.push('Unable to connect to the database. This may be a temporary issue.');
+      hints.push('Please try again in a few moments or contact support if the problem persists.');
+      break;
+
+    default:
+      if (sourceType === 'PROCEDURE') {
+        hints.push('For procedure-based pages, verify your p_sql syntax is correct.');
+        hints.push('Test your query using the "Test Query" button in page configuration.');
+      }
+      break;
+  }
+
+  return hints;
 }
 
 /**
