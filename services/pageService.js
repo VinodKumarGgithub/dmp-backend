@@ -1494,7 +1494,7 @@ const pageService = {
               rowsReturned: Array.isArray(dataRows) ? dataRows.length : 0,
               success: executionSuccess,
               errorMessage,
-              queryParams: Object.keys(queryParams).length > 0 ? queryParams : null,
+              queryParams: Object.keys(queryParams).length > 0 ? { ...queryParams, exportFormat: auditContext.exportFormat || 'csv' } : { exportFormat: auditContext.exportFormat || 'csv' },
               actionType: 'page_data_download',
               sourceType: source_type,
               dataSource: data_source

@@ -121,9 +121,11 @@ module.exports = {
 
       // Use getAllPageData to fetch ALL data without pagination for download
       // Include audit context for logging
+      const exportFormat = req.query.format || 'csv'; // csv or excel
       const auditContext = {
         userId: req.user?.userId || req.user?.id || req.user?.username,
-        ipAddress: req.ip || req.connection?.remoteAddress
+        ipAddress: req.ip || req.connection?.remoteAddress,
+        exportFormat
       };
       const { data } = await pageService.getAllPageData(config, req.query, req.db, auditContext);
 
