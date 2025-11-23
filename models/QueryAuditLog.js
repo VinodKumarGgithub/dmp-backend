@@ -30,11 +30,10 @@ const QueryAuditLog = masterSequelize.define('query_audit_log', {
     type: DataTypes.STRING,
     allowNull: true
   },
-  sql_hash: {
-    // SHA-256 hash of the executed SQL for privacy
-    type: DataTypes.STRING,
-    allowNull: false,
-    index: true
+  encrypted_sql: {
+    // AES-encrypted SQL text for troubleshooting
+    type: DataTypes.TEXT,
+    allowNull: true
   },
   execution_time_ms: {
     type: DataTypes.INTEGER,
@@ -58,7 +57,31 @@ const QueryAuditLog = masterSequelize.define('query_audit_log', {
     type: DataTypes.TEXT,
     allowNull: true
   },
-  created_at: {
+  action_type: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  severity: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  error_code: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  source_type: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  data_source: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  query_context: {
+    type: DataTypes.TEXT,
+    allowNull: true
+  },
+  createdOn: {
     type: DataTypes.DATE,
     allowNull: false,
     defaultValue: DataTypes.NOW
@@ -66,13 +89,13 @@ const QueryAuditLog = masterSequelize.define('query_audit_log', {
 }, {
   tableName: 'query_audit_logs',
   timestamps: true,
-  createdAt: 'created_at',
+  createdAt: 'createdOn',
   updatedAt: false,
   indexes: [
-    { fields: ['page_key', 'created_at'] },
-    { fields: ['tenant_id', 'created_at'] },
-    { fields: ['user_id', 'created_at'] },
-    { fields: ['created_at'] }
+    { fields: ['page_key', 'createdOn'] },
+    { fields: ['tenant_id', 'createdOn'] },
+    { fields: ['user_id', 'createdOn'] },
+    { fields: ['createdOn'] }
   ]
 });
 

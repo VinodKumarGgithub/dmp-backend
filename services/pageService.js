@@ -4,6 +4,16 @@ const { PageConfig } = require('../models/PageConfig');
 const { dbMetadataService } = require('./dbMetadataService');
 const { validateProcedureSql } = require('../utils/sqlSecurity');
 const crypto = require('crypto');
+const LOG_ENCRYPTION_KEY = process.env.LOG_ENCRYPTION_KEY || '';
+const getEncryptionKey = () => {
+  if (!LOG_ENCRYPTION_KEY) return null;
+  try {
+    return crypto.createHash('sha256').update(LOG_ENCRYPTION_KEY).digest(); // always 32 bytes
+  } catch (error) {
+    console.error('Failed to derive log encryption key:', error);
+    return null;
+  }
+};
 
 /**
  * Escape column/identifier names to handle reserved keywords
@@ -13,7 +23,7 @@ function escapeIdentifier(sequelize, identifier) {
   if (!identifier || typeof identifier !== 'string') {
     return identifier;
   }
-
+  
   const segments = identifier.split('.').filter(Boolean);
   if (segments.length === 0) {
     return identifier;
@@ -25,12 +35,12 @@ function escapeIdentifier(sequelize, identifier) {
 
   const wrapSegment = (segment) => {
     if (!segment) return segment;
-    if (dialect === 'mysql') {
+  if (dialect === 'mysql') {
       return `\`${segment}\``;
-    } else if (dialect === 'mssql') {
+  } else if (dialect === 'mssql') {
       return `[${segment}]`;
-    }
-    // For other dialects, return as-is (PostgreSQL uses double quotes)
+  }
+  // For other dialects, return as-is (PostgreSQL uses double quotes)
     return segment;
   };
 
@@ -311,6 +321,39 @@ function inferDataTypeFromField(field = {}) {
   return 'string';
 }
 
+function determineSeverity(executionTimeMs) {
+  if (!Number.isFinite(executionTimeMs)) {
+    return 'unknown';
+  }
+  if (executionTimeMs >= 4000) {
+    return 'critical';
+  }
+  if (executionTimeMs >= 2000) {
+    return 'warning';
+  }
+  return 'normal';
+}
+
+function encryptSql(sqlText) {
+  if (!sqlText || typeof sqlText !== 'string') {
+    return null;
+  }
+  const key = getEncryptionKey();
+  if (!key) {
+    return null;
+  }
+  try {
+    const iv = crypto.randomBytes(16);
+    const cipher = crypto.createCipheriv('aes-256-cbc', key, iv);
+    let encrypted = cipher.update(sqlText, 'utf8', 'base64');
+    encrypted += cipher.final('base64');
+    return `${iv.toString('base64')}:${encrypted}`;
+  } catch (error) {
+    console.error('Failed to encrypt SQL text for audit log:', error);
+    return null;
+  }
+}
+
 /**
  * Log query execution to audit log (async, non-blocking)
  */
@@ -319,18 +362,29 @@ async function logQueryExecution(auditData) {
     const { QueryAuditLog } = require('../models/QueryAuditLog');
     const { generateId } = require('../utils/idGenerator');
     
+    const resolvedSeverity = auditData.severity || determineSeverity(auditData.executionTime);
+    const resolvedActionType = auditData.actionType || 'data_query';
+    const resolvedErrorCode = auditData.errorCode || (auditData.success === false ? 'DB_QUERY_ERROR' : null);
+    const encryptedSql = encryptSql(auditData.sqlText);
+
     const logEntry = {
       id: generateId('audit'),
       page_key: auditData.pageKey,
       tenant_id: auditData.tenantId,
       user_id: auditData.userId,
       ip_address: auditData.ipAddress,
-      sql_hash: auditData.sqlHash,
+      encrypted_sql: encryptedSql,
       execution_time_ms: auditData.executionTime,
       rows_returned: auditData.rowsReturned,
       success: auditData.success,
       error_message: auditData.errorMessage,
-      query_params: auditData.queryParams ? JSON.stringify(auditData.queryParams) : null
+      query_params: auditData.queryParams ? JSON.stringify(auditData.queryParams) : null,
+      action_type: resolvedActionType,
+      severity: resolvedSeverity,
+      error_code: resolvedErrorCode,
+      source_type: auditData.sourceType || null,
+      data_source: auditData.dataSource || null,
+      query_context: auditData.queryContext ? JSON.stringify(auditData.queryContext) : null
     };
 
     await QueryAuditLog.create(logEntry);
@@ -1010,6 +1064,11 @@ const pageService = {
 
     const tenantSequelize = reqDb.sequelize;
     const { source_type = 'TABLE', source_params = [], data_source } = config;
+    const performance = {
+      queryExecutionTimeMs: null,
+      rowCount: 0
+    };
+    const actionType = 'page_data_fetch';
 
     // Handle PROCEDURE type
     if (source_type === 'PROCEDURE') {
@@ -1029,6 +1088,7 @@ const pageService = {
           let executionSuccess = true;
           let errorMessage = null;
           let dataRows = [];
+          let executionTime = null;
           
           try {
             dataRows = await tenantSequelize.query(procedureQuery.sql, {
@@ -1041,7 +1101,7 @@ const pageService = {
             errorMessage = queryError.message || String(queryError);
             
             // Enhance error with query context
-            const executionTime = Date.now() - startTime;
+            executionTime = Date.now() - startTime;
             const enhancedError = createErrorWithContext(queryError, {
               sql: procedureQuery.sql,
               replacements: procedureQuery.replacements,
@@ -1053,18 +1113,22 @@ const pageService = {
             throw enhancedError;
           } finally {
             // Log query execution (non-blocking)
-            const executionTime = Date.now() - startTime;
+            executionTime = executionTime ?? (Date.now() - startTime);
+            performance.queryExecutionTimeMs = executionTime;
             logQueryExecution({
               pageKey: config.page_key,
               tenantId: reqDb.tenantId,
               userId: auditContext.userId,
               ipAddress: auditContext.ipAddress,
-              sqlHash: hashSql(procedureQuery.sql),
+              sqlText: procedureQuery.sql,
               executionTime,
               rowsReturned: Array.isArray(dataRows) ? dataRows.length : 0,
               success: executionSuccess,
               errorMessage,
-              queryParams: Object.keys(queryParams).length > 0 ? queryParams : null
+              queryParams: Object.keys(queryParams).length > 0 ? queryParams : null,
+              actionType,
+              sourceType: source_type,
+              dataSource: data_source
             }).catch(() => {
               // Ignore audit logging errors
             });
@@ -1085,8 +1149,8 @@ const pageService = {
 
           const totalBase = ((pageNum - 1) * (Number.isFinite(pageLimit) ? pageLimit : data.length)) + data.length;
           const total = hasMore ? totalBase + 1 : totalBase;
-
-          return { data, total, hasMore };
+          performance.rowCount = Array.isArray(data) ? data.length : 0;
+          return { data, total, hasMore, performance };
         }
 
         // Fallback to executing the stored procedure directly when p_sql is not provided
@@ -1121,13 +1185,43 @@ const pageService = {
         }
 
         // Execute procedure
-        const dataRows = await tenantSequelize.query(procedureCall, {
-          replacements: procedureReplacements,
-          type: tenantSequelize.QueryTypes.SELECT
-        });
+        const startTime = Date.now();
+        let executionSuccess = true;
+        let errorMessage = null;
+        let dataRows = [];
+        let executionTime = null;
+        try {
+          dataRows = await tenantSequelize.query(procedureCall, {
+            replacements: procedureReplacements,
+            type: tenantSequelize.QueryTypes.SELECT
+          });
+        } catch (queryError) {
+          executionSuccess = false;
+          errorMessage = queryError.message || String(queryError);
+          throw queryError;
+        } finally {
+          executionTime = Date.now() - startTime;
+          performance.queryExecutionTimeMs = executionTime;
+          logQueryExecution({
+            pageKey: config.page_key,
+            tenantId: reqDb.tenantId,
+            userId: auditContext.userId,
+            ipAddress: auditContext.ipAddress,
+            sqlText: procedureCall,
+            executionTime,
+            rowsReturned: Array.isArray(dataRows) ? dataRows.length : 0,
+            success: executionSuccess,
+            errorMessage,
+            queryParams: Object.keys(queryParams).length > 0 ? queryParams : null,
+            actionType,
+            sourceType: source_type,
+            dataSource: data_source
+          }).catch(() => {});
+        }
 
         if (!Array.isArray(dataRows)) {
-          return { data: [], total: 0, hasMore: false };
+          performance.rowCount = 0;
+          return { data: [], total: 0, hasMore: false, performance };
         }
 
         // Apply column selection (if columns are specified)
@@ -1146,10 +1240,10 @@ const pageService = {
         const pageSize = Math.min(Math.max(parseInt(requestedPageSize, 10) || defaultPageSize, 1), 100);
         const offset = (page - 1) * pageSize;
         const hasMore = total > offset + pageSize;
-        processedData = processedData?.length > 0 ? [...Object.values(processedData[0])] : [];
         const paginatedData = processedData.slice(offset, offset + pageSize);
+        performance.rowCount = paginatedData.length;
 
-        return { data: paginatedData, total, hasMore };
+        return { data: paginatedData, total, hasMore, performance };
       } catch (error) {
         if (error.code) throw error;
         throw mapDbError(error);
@@ -1181,10 +1275,37 @@ const pageService = {
         // Fetch all data without WHERE clause (will filter in-memory)
         const baseSql = `FROM ${queryDataSource}`;
         const dataSql = `SELECT * ${baseSql} ${orderBy || ''}`;
-        dataRows = await tenantSequelize.query(dataSql, {
-          replacements: { ...replacements },
-          type: tenantSequelize.QueryTypes.SELECT
-        });
+        const startTime = Date.now();
+        let executionSuccess = true;
+        let errorMessage = null;
+        try {
+          dataRows = await tenantSequelize.query(dataSql, {
+            replacements: { ...replacements },
+            type: tenantSequelize.QueryTypes.SELECT
+          });
+        } catch (queryError) {
+          executionSuccess = false;
+          errorMessage = queryError.message || String(queryError);
+          throw queryError;
+        } finally {
+          const executionTime = Date.now() - startTime;
+          performance.queryExecutionTimeMs = executionTime;
+          logQueryExecution({
+            pageKey: config.page_key,
+            tenantId: reqDb.tenantId,
+            userId: auditContext.userId,
+            ipAddress: auditContext.ipAddress,
+            sqlText: dataSql,
+            executionTime,
+            rowsReturned: Array.isArray(dataRows) ? dataRows.length : 0,
+            success: executionSuccess,
+            errorMessage,
+          queryParams: Object.keys(queryParams).length > 0 ? queryParams : null,
+          actionType,
+          sourceType: source_type,
+          dataSource: data_source
+          }).catch(() => {});
+        }
         
         data = Array.isArray(dataRows) ? dataRows : [];
         
@@ -1201,18 +1322,52 @@ const pageService = {
         const pageSize = Math.min(Math.max(parseInt(requestedPageSize, 10) || defaultPageSize, 1), 100);
         const offset = (page - 1) * pageSize;
         data = data.slice(offset, offset + pageSize);
-        
-        return { data, total, hasMore: false };
+        performance.rowCount = data.length;
+        return { data, total, hasMore: false, performance };
       } else {
         // Normal SQL-based filtering for TABLEs or VIEWs with configured fields
         const baseSql = `FROM ${queryDataSource} ${whereClause}`;
         const dataSql = `SELECT * ${baseSql} ${orderBy} LIMIT :limit OFFSET :offset`;
 
         // Execute data query
+        const startTime = Date.now();
+        let executionSuccess = true;
+        let errorMessage = null;
+        try {
         dataRows = await tenantSequelize.query(dataSql, {
           replacements: { ...replacements, limit, offset },
           type: tenantSequelize.QueryTypes.SELECT
         });
+        } catch (queryError) {
+          executionSuccess = false;
+          errorMessage = queryError.message || String(queryError);
+          const enhancedError = createErrorWithContext(queryError, {
+            sql: dataSql,
+            replacements: { ...replacements, limit, offset },
+            executionTime: Date.now() - startTime,
+            pageKey: config.page_key,
+            sourceType: source_type
+          });
+          throw enhancedError;
+        } finally {
+          const executionTime = Date.now() - startTime;
+          performance.queryExecutionTimeMs = executionTime;
+          logQueryExecution({
+            pageKey: config.page_key,
+            tenantId: reqDb.tenantId,
+            userId: auditContext.userId,
+            ipAddress: auditContext.ipAddress,
+            sqlText: dataSql,
+            executionTime,
+            rowsReturned: Array.isArray(dataRows) ? dataRows.length : 0,
+            success: executionSuccess,
+            errorMessage,
+          queryParams: Object.keys(queryParams).length > 0 ? queryParams : null,
+          actionType,
+          sourceType: source_type,
+          dataSource: data_source
+          }).catch(() => {});
+        }
 
         data = Array.isArray(dataRows) ? dataRows : [];
 
@@ -1245,7 +1400,8 @@ const pageService = {
           total = 1000000;
         }
 
-        return { data, total, hasMore: false };
+        performance.rowCount = data.length;
+        return { data, total, hasMore: false, performance };
       }
     } catch (error) {
       // Check for table/view not found errors
@@ -1322,12 +1478,15 @@ const pageService = {
               tenantId: reqDb.tenantId,
               userId: auditContext.userId,
               ipAddress: auditContext.ipAddress,
-              sqlHash: hashSql(procedureQuery.sql),
+              sqlText: procedureQuery.sql,
               executionTime,
               rowsReturned: Array.isArray(dataRows) ? dataRows.length : 0,
               success: executionSuccess,
               errorMessage,
-              queryParams: Object.keys(queryParams).length > 0 ? queryParams : null
+              queryParams: Object.keys(queryParams).length > 0 ? queryParams : null,
+              actionType: 'page_data_download',
+              sourceType: source_type,
+              dataSource: data_source
             }).catch(() => {
               // Ignore audit logging errors
             });

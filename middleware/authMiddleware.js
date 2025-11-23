@@ -7,7 +7,11 @@ function authMiddleware(req, res, next) {
   const token = header.startsWith('Bearer ') ? header.slice(7) : null;
   if (!token) return next(fromCode('UNAUTHORIZED'));
   try {
-    req.user = jwt.verify(token, process.env.JWT_SECRET || 'changeme');
+    const payload = jwt.verify(token, process.env.JWT_SECRET || 'changeme');
+    req.user = {
+      ...payload,
+      userId: payload.userId || payload.id || payload.username,
+    };
     next();
   } catch (e) {
     return next(fromCode('INVALIDTOKEN'));

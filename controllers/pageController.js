@@ -70,11 +70,11 @@ module.exports = {
       // Pass req.db directly to use tenant database connection
       // Include audit context for logging
       const auditContext = {
-        userId: req.user?.id || req.user?.userId,
+        userId: req.user?.userId || req.user?.id || req.user?.username,
         ipAddress: req.ip || req.connection?.remoteAddress
       };
-      const { data, total, hasMore } = await pageService.getPageData(config, req.query, req.db, auditContext);
-      res.json(success({ data, total, hasMore }, 'Page data fetched successfully'));
+      const { data, total, hasMore, performance } = await pageService.getPageData(config, req.query, req.db, auditContext);
+      res.json(success({ data, total, hasMore, performance }, 'Page data fetched successfully'));
     } catch (err) {
       next(err);
     }
@@ -91,12 +91,12 @@ module.exports = {
       // Pass req.db directly to use tenant database connection
       // Include audit context for logging
       const auditContext = {
-        userId: req.user?.id || req.user?.userId,
+        userId: req.user?.userId || req.user?.id || req.user?.username,
         ipAddress: req.ip || req.connection?.remoteAddress
       };
-      const { data, total, hasMore } = await pageService.getPageData(config, req.query, req.db, auditContext);
+      const { data, total, hasMore, performance } = await pageService.getPageData(config, req.query, req.db, auditContext);
 
-      res.json(success({ config, data, total, hasMore }, 'Page config and data fetched successfully'));
+      res.json(success({ config, data, total, hasMore, performance }, 'Page config and data fetched successfully'));
     } catch (err) {
       next(err);
     }
@@ -117,7 +117,7 @@ module.exports = {
       // Use getAllPageData to fetch ALL data without pagination for download
       // Include audit context for logging
       const auditContext = {
-        userId: req.user?.id || req.user?.userId,
+        userId: req.user?.userId || req.user?.id || req.user?.username,
         ipAddress: req.ip || req.connection?.remoteAddress
       };
       const { data } = await pageService.getAllPageData(config, req.query, req.db, auditContext);
