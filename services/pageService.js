@@ -11,15 +11,28 @@ function escapeIdentifier(sequelize, identifier) {
   if (!identifier || typeof identifier !== 'string') {
     return identifier;
   }
-  
-  const dialect = sequelize.getDialect();
-  if (dialect === 'mysql') {
-    return `\`${identifier}\``;
-  } else if (dialect === 'mssql') {
-    return `[${identifier}]`;
+
+  const segments = identifier.split('.').filter(Boolean);
+  if (segments.length === 0) {
+    return identifier;
   }
-  // For other dialects, return as-is (PostgreSQL uses double quotes)
-  return identifier;
+
+  const dialect = sequelize && typeof sequelize.getDialect === 'function'
+    ? sequelize.getDialect()
+    : null;
+
+  const wrapSegment = (segment) => {
+    if (!segment) return segment;
+    if (dialect === 'mysql') {
+      return `\`${segment}\``;
+    } else if (dialect === 'mssql') {
+      return `[${segment}]`;
+    }
+    // For other dialects, return as-is (PostgreSQL uses double quotes)
+    return segment;
+  };
+
+  return segments.map(wrapSegment).join('.');
 }
 
 function parsePositiveInt(value) {
@@ -51,6 +64,186 @@ function parseJsonField(text, fallback) {
   } catch (e) {
     throw fromCode('PAGE_CONFIG_INVALID', [`Invalid JSON in page configuration: ${e.message}`]);
   }
+}
+
+function resolvePageNumber(queryParams = {}) {
+  const page = queryParams.page;
+  return Math.max(parseInt(page, 10) || 1, 1);
+}
+
+function resolvePageSize(config = {}, queryParams = {}) {
+  const defaultPageSize = config.page_size_default || 20;
+  let requestedPageSize = defaultPageSize;
+  const pageSize = queryParams.pageSize;
+  if (pageSize !== undefined && pageSize !== null && pageSize !== '') {
+    const parsed = parseInt(pageSize, 10);
+    if (!Number.isNaN(parsed) && parsed > 0) {
+      requestedPageSize = parsed;
+    }
+  }
+  return Math.min(Math.max(requestedPageSize, 1), 100);
+}
+
+const SIMPLE_IDENTIFIER_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+const QUALIFIED_IDENTIFIER_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*$/;
+
+function isSafeIdentifier(identifier, { allowQualified = false } = {}) {
+  if (!identifier || typeof identifier !== 'string') {
+    return false;
+  }
+  const pattern = allowQualified ? QUALIFIED_IDENTIFIER_PATTERN : SIMPLE_IDENTIFIER_PATTERN;
+  return pattern.test(identifier);
+}
+
+function stripTrailingSemicolon(sql = '') {
+  if (typeof sql !== 'string') return '';
+  return sql.replace(/;\s*$/, '').trim();
+}
+
+function stripPaginationClauses(sql = '') {
+  if (!sql) {
+    return { sql: '', paginationClause: '' };
+  }
+
+  let cleaned = stripTrailingSemicolon(sql);
+  const paginationPatterns = [
+    /\boffset\s+\S+\s+rows\s+fetch\s+next\s+\S+\s+rows\s+only\s*$/i,
+    /\blimit\s+\S+(?:\s+offset\s+\S+)?\s*$/i
+  ];
+
+  for (const pattern of paginationPatterns) {
+    const match = pattern.exec(cleaned);
+    if (match && match.index !== undefined) {
+      const clause = match[0];
+      const head = cleaned.slice(0, match.index).trim();
+      return { sql: head, paginationClause: clause.trim() };
+    }
+  }
+
+  return { sql: cleaned, paginationClause: '' };
+}
+
+function stripOrderByClause(sql = '') {
+  if (!sql) {
+    return { head: '', orderClause: '' };
+  }
+  const orderRegex = /\border\s+by\b/gi;
+  let match;
+  let lastIndex = -1;
+  while ((match = orderRegex.exec(sql)) !== null) {
+    lastIndex = match.index;
+  }
+
+  if (lastIndex === -1) {
+    return { head: sql.trim(), orderClause: '' };
+  }
+
+  return {
+    head: sql.slice(0, lastIndex).trim(),
+    orderClause: sql.slice(lastIndex).trim()
+  };
+}
+
+function appendWhereClauseBody(sqlBody = '', whereClause = '') {
+  if (!sqlBody) return '';
+  if (!whereClause) return sqlBody.trim();
+
+  const clause = whereClause.trim().replace(/^WHERE\s+/i, '').trim();
+  if (!clause) {
+    return sqlBody.trim();
+  }
+
+  const trimmedBody = sqlBody.trim();
+  if (!trimmedBody) {
+    return trimmedBody;
+  }
+
+  if (/\bwhere\b/i.test(trimmedBody)) {
+    return `${trimmedBody} AND (${clause})`;
+  }
+  return `${trimmedBody} WHERE ${clause}`;
+}
+
+function extractProcedureSql(sourceParams = []) {
+  if (!Array.isArray(sourceParams)) {
+    return { baseSql: null, remainingParams: [] };
+  }
+
+  let baseSql = null;
+  const remainingParams = [];
+
+  sourceParams.forEach((param) => {
+    if (!param || !param.name) return;
+    if (param.name === 'p_sql' && baseSql === null) {
+      const hasValue = Object.prototype.hasOwnProperty.call(param, 'value');
+      const candidate = hasValue ? param.value : param.default_value;
+      if (typeof candidate === 'string' && candidate.trim()) {
+        baseSql = candidate.trim();
+      }
+    } else {
+      remainingParams.push(param);
+    }
+  });
+
+  return { baseSql, remainingParams };
+}
+
+function applyPaginationClause(sql, limit, offset, sequelize, replacements = {}, keyPrefix = 'proc') {
+  if (!Number.isFinite(limit) || limit <= 0) {
+    return { sql, replacements: { ...replacements } };
+  }
+
+  const limitKey = `${keyPrefix}_limit`;
+  const offsetKey = `${keyPrefix}_offset`;
+
+  const nextReplacements = { ...replacements };
+  nextReplacements[limitKey] = limit;
+  nextReplacements[offsetKey] = Number.isFinite(offset) ? offset : 0;
+
+  const dialect = sequelize && typeof sequelize.getDialect === 'function'
+    ? sequelize.getDialect()
+    : null;
+
+  let paginatedSql = sql.trim();
+  if (!paginatedSql) {
+    return { sql, replacements: nextReplacements };
+  }
+
+  if (dialect === 'mssql') {
+    if (!/\border\s+by\b/i.test(paginatedSql)) {
+      paginatedSql = `${paginatedSql} ORDER BY (SELECT NULL)`;
+    }
+    paginatedSql = `${paginatedSql} OFFSET :${offsetKey} ROWS FETCH NEXT :${limitKey} ROWS ONLY`;
+  } else {
+    paginatedSql = `${paginatedSql} LIMIT :${limitKey} OFFSET :${offsetKey}`;
+  }
+
+  return { sql: paginatedSql, replacements: nextReplacements };
+}
+
+async function countSqlRows(sql, replacements, sequelize) {
+  if (!sql || !sequelize) {
+    return 0;
+  }
+
+  const countSql = `SELECT COUNT(*) as count FROM (${sql}) AS count_alias`;
+  const rows = await sequelize.query(countSql, {
+    replacements,
+    type: sequelize.QueryTypes.SELECT
+  });
+
+  if (Array.isArray(rows) && rows.length > 0) {
+    const row = rows[0];
+    const value =
+      row.count ??
+      row.COUNT ??
+      row['COUNT(*)'] ??
+      Object.values(row)[0];
+    const parsed = typeof value === 'number' ? value : parseInt(value, 10);
+    return Number.isNaN(parsed) ? 0 : parsed;
+  }
+
+  return 0;
 }
 
 const pageService = {
@@ -111,24 +304,14 @@ const pageService = {
     const { columns, searchable_fields, filterable_fields, default_sort, data_source, source_type = 'TABLE' } = config;
     
     // Validate data_source is a safe identifier (alphanumeric, underscore, no SQL injection)
-    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(data_source)) {
+    if (!isSafeIdentifier(data_source)) {
       throw fromCode('PAGE_DATA_SOURCE_INVALID', [`Invalid data source name: ${data_source}`]);
     }
 
-    const { search, sortBy, sortOrder, page = 1, pageSize } = queryParams;
+    const { search, sortBy, sortOrder } = queryParams;
 
-    // Validate pagination params
-    // Use pageSize if provided, otherwise use config.page_size_default, fallback to 20
-    const defaultPageSize = config.page_size_default || 20;
-    let requestedPageSize = defaultPageSize;
-    if (pageSize !== undefined && pageSize !== null && pageSize !== '') {
-      const parsed = parseInt(pageSize, 10);
-      if (!isNaN(parsed) && parsed > 0) {
-        requestedPageSize = parsed;
-      }
-    }
-    const limit = Math.min(Math.max(requestedPageSize, 1), 100); // cap between 1 and 100
-    const pageNum = Math.max(parseInt(page, 10) || 1, 1);
+    const limit = resolvePageSize(config, queryParams);
+    const pageNum = resolvePageNumber(queryParams);
     const offset = (pageNum - 1) * limit;
 
     const where = [];
@@ -155,7 +338,7 @@ const pageService = {
         const likeClauses = [];
         fieldsToSearch.forEach((field, idx) => {
           // Validate field name is safe
-          if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(field)) {
+          if (!isSafeIdentifier(field, { allowQualified: true })) {
             throw fromCode('PAGE_CONFIG_INVALID', [`Invalid searchable field name: ${field}`]);
           }
           const key = `search_${idx}`;
@@ -176,7 +359,7 @@ const pageService = {
           throw fromCode('PAGE_CONFIG_INVALID', ['Invalid filterable field configuration']);
         }
         // Validate field name is safe
-        if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(f.name)) {
+        if (!isSafeIdentifier(f.name, { allowQualified: true })) {
           throw fromCode('PAGE_CONFIG_INVALID', [`Invalid filterable field name: ${f.name}`]);
         }
 
@@ -209,7 +392,7 @@ const pageService = {
     let orderBy = '';
     if (sortBy && typeof sortBy === 'string') {
       // Validate field name is safe
-      if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(sortBy)) {
+      if (!isSafeIdentifier(sortBy, { allowQualified: true })) {
         throw fromCode('VALIDATION_ERROR', [`Invalid sort field: ${sortBy}`]);
       }
       // If columns are specified, validate against them; otherwise allow any field (for VIEWs, will validate in-memory)
@@ -221,7 +404,7 @@ const pageService = {
       orderBy = `ORDER BY ${escapedSortBy} ${dir}`;
     } else if (default_sort && default_sort.field) {
       // Validate field name is safe
-      if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(default_sort.field)) {
+      if (!isSafeIdentifier(default_sort.field, { allowQualified: true })) {
         throw fromCode('VALIDATION_ERROR', [`Invalid default sort field: ${default_sort.field}`]);
       }
       // If columns are specified, validate against them; otherwise allow any field
@@ -237,6 +420,81 @@ const pageService = {
     return { whereClause, orderBy, limit, offset, replacements, data_source };
   },
 
+  buildProcedureSql(config, queryParams, sequelize, options = {}, baseSqlOverride) {
+    if (!sequelize) {
+      throw fromCode('TENANT_DB_NOT_AVAILABLE');
+    }
+
+    const sourceParams = config?.source_params || [];
+    const resolvedBaseSql = typeof baseSqlOverride === 'string' && baseSqlOverride.trim()
+      ? baseSqlOverride.trim()
+      : extractProcedureSql(sourceParams).baseSql;
+
+    if (!resolvedBaseSql) {
+      throw fromCode('PAGE_CONFIG_INVALID', ['Procedure configuration must include a p_sql parameter']);
+    }
+
+    const {
+      sql: baseWithoutPagination,
+      paginationClause: existingPaginationClause
+    } = stripPaginationClauses(resolvedBaseSql);
+    const { head: baseWithoutOrder, orderClause: existingOrderClause } = stripOrderByClause(baseWithoutPagination);
+
+    const queryFragments = this.buildQuery(config, queryParams, sequelize);
+    const filteredSql = appendWhereClauseBody(baseWithoutOrder, queryFragments.whereClause);
+    const effectiveOrderClause =
+      queryFragments.orderBy && queryFragments.orderBy.trim()
+        ? queryFragments.orderBy.trim()
+        : existingOrderClause;
+
+    const orderedSql = effectiveOrderClause ? `${filteredSql} ${effectiveOrderClause}`.trim() : filteredSql;
+
+    const {
+      pagination = true,
+      limitOverride,
+      offsetOverride,
+      paginationKeyPrefix = 'proc',
+      extraRows = 0
+    } = options;
+
+    const limitToUse =
+      limitOverride !== undefined && limitOverride !== null ? limitOverride : queryFragments.limit;
+    const offsetToUse =
+      offsetOverride !== undefined && offsetOverride !== null ? offsetOverride : queryFragments.offset;
+    const extraRowCount = Number.isFinite(extraRows) && extraRows > 0 ? extraRows : 0;
+
+    let finalSql = orderedSql;
+    let finalReplacements = { ...queryFragments.replacements };
+    const hadExistingPagination = Boolean(existingPaginationClause);
+
+    if (hadExistingPagination) {
+      finalSql = `${orderedSql} ${existingPaginationClause}`.trim();
+    } else if (pagination && Number.isFinite(limitToUse) && limitToUse > 0) {
+      const limitForQuery = limitToUse + extraRowCount;
+      const paginationResult = applyPaginationClause(
+        orderedSql,
+        limitForQuery,
+        Number.isFinite(offsetToUse) ? offsetToUse : 0,
+        sequelize,
+        queryFragments.replacements,
+        paginationKeyPrefix
+      );
+      finalSql = paginationResult.sql;
+      finalReplacements = paginationResult.replacements;
+    }
+
+    return {
+      sql: finalSql,
+      filteredSql,
+      orderedSql,
+      replacements: finalReplacements,
+      baseReplacements: { ...queryFragments.replacements },
+      limit: limitToUse,
+      offset: offsetToUse,
+      hadExistingPagination
+    };
+  },
+
   /**
    * Build procedure parameters from config and query params
    * Merges default values from config with overrides from query params
@@ -246,8 +504,15 @@ const pageService = {
     if (!Array.isArray(sourceParamsConfig) || sourceParamsConfig.length === 0) {
       return [];
     }
+    const usableParams = sourceParamsConfig.filter(
+      (paramConfig) => paramConfig && paramConfig.name && paramConfig.name !== 'p_sql'
+    );
 
-    return sourceParamsConfig.map((paramConfig) => {
+    if (usableParams.length === 0) {
+      return [];
+    }
+
+    return usableParams.map((paramConfig) => {
       const paramName = paramConfig.name;
       // Check if query params override the default value
       if (queryParams && queryParams[paramName] !== undefined && queryParams[paramName] !== null) {
@@ -473,8 +738,41 @@ const pageService = {
     // Handle PROCEDURE type
     if (source_type === 'PROCEDURE') {
       try {
-        // Build procedure parameters from config and query params
-        const procedureParams = this.buildProcedureParams(source_params, queryParams);
+        const { baseSql, remainingParams } = extractProcedureSql(source_params);
+        if (baseSql) {
+          const procedureQuery = this.buildProcedureSql(
+            config,
+            queryParams,
+            tenantSequelize,
+            { extraRows: 1 },
+            baseSql
+          );
+          const dataRows = await tenantSequelize.query(procedureQuery.sql, {
+            replacements: procedureQuery.replacements,
+            type: tenantSequelize.QueryTypes.SELECT
+          });
+
+          let data = Array.isArray(dataRows) ? dataRows : [];
+          data = this.selectColumns(data, config.columns);
+
+          const pageLimit = Number.isFinite(procedureQuery.limit) ? procedureQuery.limit : resolvePageSize(config, queryParams);
+          const pageNum = resolvePageNumber(queryParams);
+          let hasMore = false;
+          if (!procedureQuery.hadExistingPagination && Number.isFinite(pageLimit) && pageLimit > 0) {
+            if (data.length > pageLimit) {
+              hasMore = true;
+              data = data.slice(0, pageLimit);
+            }
+          }
+
+          const totalBase = ((pageNum - 1) * (Number.isFinite(pageLimit) ? pageLimit : data.length)) + data.length;
+          const total = hasMore ? totalBase + 1 : totalBase;
+
+          return { data, total, hasMore };
+        }
+
+        // Fallback to executing the stored procedure directly when p_sql is not provided
+        const procedureParams = this.buildProcedureParams(remainingParams, queryParams);
         
         // Build procedure call - dialect specific
         const dialect = tenantSequelize.getDialect();
@@ -493,8 +791,8 @@ const pageService = {
           });
         } else if (dialect === 'mssql') {
           // SQL Server: EXEC procedure_name @paramName1=:paramName1, @paramName2=:paramName2, ...
-          // Use actual parameter names from source_params config
-          const paramList = source_params.map((paramConfig, idx) => {
+          // Use actual parameter names from source params config
+          const paramList = remainingParams.map((paramConfig, idx) => {
             const paramName = paramConfig.name;
             procedureReplacements[paramName] = procedureParams[idx];
             return `@${paramName}=:${paramName}`;
@@ -511,7 +809,7 @@ const pageService = {
         });
 
         if (!Array.isArray(dataRows)) {
-          return { data: [], total: 0 };
+          return { data: [], total: 0, hasMore: false };
         }
 
         // Apply column selection (if columns are specified)
@@ -529,10 +827,11 @@ const pageService = {
         const requestedPageSize = queryParams.pageSize ? parseInt(queryParams.pageSize, 10) : defaultPageSize;
         const pageSize = Math.min(Math.max(parseInt(requestedPageSize, 10) || defaultPageSize, 1), 100);
         const offset = (page - 1) * pageSize;
+        const hasMore = total > offset + pageSize;
         processedData = processedData?.length > 0 ? [...Object.values(processedData[0])] : [];
         const paginatedData = processedData.slice(offset, offset + pageSize);
 
-        return { data: paginatedData, total };
+        return { data: paginatedData, total, hasMore };
       } catch (error) {
         if (error.code) throw error;
         throw mapDbError(error);
@@ -585,7 +884,7 @@ const pageService = {
         const offset = (page - 1) * pageSize;
         data = data.slice(offset, offset + pageSize);
         
-        return { data, total };
+        return { data, total, hasMore: false };
       } else {
         // Normal SQL-based filtering for TABLEs or VIEWs with configured fields
         const baseSql = `FROM ${queryDataSource} ${whereClause}`;
@@ -628,7 +927,7 @@ const pageService = {
           total = 1000000;
         }
 
-        return { data, total };
+        return { data, total, hasMore: false };
       }
     } catch (error) {
       // Check for table/view not found errors
@@ -667,8 +966,38 @@ const pageService = {
     // Handle PROCEDURE type
     if (source_type === 'PROCEDURE') {
       try {
+        const { baseSql, remainingParams } = extractProcedureSql(source_params);
+        if (baseSql) {
+          const procedureQuery = this.buildProcedureSql(
+            config,
+            queryParams,
+            tenantSequelize,
+            {
+              pagination: Boolean(downloadLimit),
+              limitOverride: downloadLimit ?? undefined,
+              offsetOverride: 0,
+              paginationKeyPrefix: 'download'
+            },
+            baseSql
+          );
+          const dataRows = await tenantSequelize.query(procedureQuery.sql, {
+            replacements: procedureQuery.replacements,
+            type: tenantSequelize.QueryTypes.SELECT
+          });
+
+          if (!Array.isArray(dataRows)) {
+            return { data: [] };
+          }
+
+          let data = this.selectColumns(dataRows, config.columns);
+          if (downloadLimit && Array.isArray(data)) {
+            data = data.slice(0, downloadLimit);
+          }
+          return { data };
+        }
+
         // Build procedure parameters from config and query params
-        const procedureParams = this.buildProcedureParams(source_params, queryParams);
+        const procedureParams = this.buildProcedureParams(remainingParams, queryParams);
         
         // Build procedure call - dialect specific
         const dialect = tenantSequelize.getDialect();
@@ -688,7 +1017,7 @@ const pageService = {
         } else if (dialect === 'mssql') {
           // SQL Server: EXEC procedure_name @paramName1=:paramName1, @paramName2=:paramName2, ...
           // Use actual parameter names from source_params config
-          const paramList = source_params.map((paramConfig, idx) => {
+          const paramList = remainingParams.map((paramConfig, idx) => {
             const paramName = paramConfig.name;
             procedureReplacements[paramName] = procedureParams[idx];
             return `@${paramName}=:${paramName}`;

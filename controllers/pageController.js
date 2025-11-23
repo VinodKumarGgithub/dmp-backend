@@ -68,8 +68,8 @@ module.exports = {
       }
       const config = await pageService.getPageConfigByKey(pageKey);
       // Pass req.db directly to use tenant database connection
-      const { data, total } = await pageService.getPageData(config, req.query, req.db);
-      res.json(success({ data, total }, 'Page data fetched successfully'));
+      const { data, total, hasMore } = await pageService.getPageData(config, req.query, req.db);
+      res.json(success({ data, total, hasMore }, 'Page data fetched successfully'));
     } catch (err) {
       next(err);
     }
@@ -84,9 +84,9 @@ module.exports = {
       }
       const config = await pageService.getPageConfigByKey(pageKey);
       // Pass req.db directly to use tenant database connection
-      const { data, total } = await pageService.getPageData(config, req.query, req.db);
+      const { data, total, hasMore } = await pageService.getPageData(config, req.query, req.db);
 
-      res.json(success({ config, data, total }, 'Page config and data fetched successfully'));
+      res.json(success({ config, data, total, hasMore }, 'Page config and data fetched successfully'));
     } catch (err) {
       next(err);
     }
