@@ -3,6 +3,7 @@ const tenantRegistryRoutes = require('./tenantRegistry');
 const pageMasterRoutes = require('./pageMasterRoutes');
 const pageTenantRoutes = require('./pageTenantRoutes');
 const userRoutes = require('./userRoutes');
+const userPreferenceRoutes = require('./userPreferenceRoutes');
 const { tenantResolver } = require('../middleware/tenantResolver');
 const { login } = require('../controllers/authController');
 
@@ -15,6 +16,7 @@ router.post('/auth/login', login);
 router.use('/users', userRoutes); // Admin user management routes
 router.use('/tenants', tenantRegistryRoutes);
 router.use('/pages', pageMasterRoutes);
+router.use('/page-preferences', userPreferenceRoutes);
 
 // Tenant-aware routes (with tenant resolution)
 router.use(tenantResolver);

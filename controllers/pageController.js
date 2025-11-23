@@ -4,7 +4,7 @@ const { pageConfigService } = require('../services/pageConfigService');
 const { dbMetadataService } = require('../services/dbMetadataService');
 const { masterSequelize } = require('../config/db');
 const { fromCode } = require('../utils/errors');
-const { assertUserHasPageAccess, getUserPermissions } = require('../services/userPermissionService');
+const { assertUserHasPageAccess, getAllowedPageKeys } = require('../services/userPermissionService');
 
 module.exports = {
   // GET /api/pages

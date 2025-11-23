@@ -1197,9 +1197,9 @@ const pageService = {
         let executionTime = null;
         try {
           dataRows = await tenantSequelize.query(procedureCall, {
-            replacements: procedureReplacements,
-            type: tenantSequelize.QueryTypes.SELECT
-          });
+          replacements: procedureReplacements,
+          type: tenantSequelize.QueryTypes.SELECT
+        });
         } catch (queryError) {
           executionSuccess = false;
           errorMessage = queryError.message || String(queryError);
@@ -1284,10 +1284,10 @@ const pageService = {
         let executionSuccess = true;
         let errorMessage = null;
         try {
-          dataRows = await tenantSequelize.query(dataSql, {
-            replacements: { ...replacements },
-            type: tenantSequelize.QueryTypes.SELECT
-          });
+        dataRows = await tenantSequelize.query(dataSql, {
+          replacements: { ...replacements },
+          type: tenantSequelize.QueryTypes.SELECT
+        });
         } catch (queryError) {
           executionSuccess = false;
           errorMessage = queryError.message || String(queryError);
