@@ -453,10 +453,15 @@ async function countSqlRows(sql, replacements, sequelize) {
 }
 
 const pageService = {
-  async listPages() {
+  async listPages(pageKeyFilter = null) {
     try {
+      const where = {};
+      if (Array.isArray(pageKeyFilter) && pageKeyFilter.length > 0) {
+        where.page_key = pageKeyFilter;
+      }
       const pages = await PageConfig.findAll({
-        attributes: ['page_key', 'title', 'is_download_allowed', 'download_row_limit']
+        attributes: ['page_key', 'title', 'is_download_allowed', 'download_row_limit'],
+        where,
       });
       return pages;
     } catch (error) {

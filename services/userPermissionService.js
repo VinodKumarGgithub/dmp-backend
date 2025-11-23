@@ -132,11 +132,24 @@ async function assertUserHasPageAccess(user, tenantId, pageKey) {
   }
 }
 
+async function getAllowedPageKeys(user) {
+  if (!user || !user.userId) return null;
+  if (user.role === 'ADMIN' || user.role === 'MANAGER') {
+    return null;
+  }
+  const permissions = await getUserPermissions(user.userId);
+  if (permissions.pages && permissions.pages.length > 0) {
+    return permissions.pages;
+  }
+  return null;
+}
+
 module.exports = {
   getUserPermissions,
   getPermissionsForUsers,
   setUserPermissions,
   deleteUserPermissions,
   assertUserHasPageAccess,
+  getAllowedPageKeys,
 };
 

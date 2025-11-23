@@ -10,26 +10,9 @@ module.exports = {
   // GET /api/pages
   async listPages(req, res, next) {
     try {
-      const pages = await pageService.listPages();
-      const role = req.user?.role;
-      if (role === 'ADMIN' || role === 'MANAGER') {
-        return res.json(success(pages, 'Pages fetched successfully'));
-      }
-
-      const userId = req.user?.userId || req.user?.id;
-      if (!userId) {
-        return res.json(success([], 'Pages fetched successfully'));
-      }
-
-      const permissions = await getUserPermissions(userId);
-      const allowedPageKeys = Array.isArray(permissions.pages) ? permissions.pages : [];
-
-      if (allowedPageKeys.length === 0) {
-        return res.json(success(pages, 'Pages fetched successfully'));
-      }
-
-      const filteredPages = pages.filter((page) => allowedPageKeys.includes(page.page_key));
-      res.json(success(filteredPages, 'Pages fetched successfully'));
+      const allowedPageKeys = await getAllowedPageKeys(req.user);
+      const pages = await pageService.listPages(allowedPageKeys);
+      res.json(success(pages, 'Pages fetched successfully'));
     } catch (err) {
       next(err);
     }
