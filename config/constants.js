@@ -13,10 +13,17 @@ module.exports = {
       TENANT_NOT_FOUND: "Tenant DB not found"
     },
     DB_POOL: {
-        MIN: 1,
-        MAX: 10,
+        MIN: 10,
+        MAX: 100,
         ACQUIRE: 30000,
-        IDLE:10000,
+        IDLE: 10000,
+    },
+    REDIS: {
+        URL: process.env.REDIS_URL || 'redis://localhost:6379',
+    },
+    RATE_LIMIT: {
+        WINDOW: 60000,      // 1 minute
+        MAX_QUERIES: 30,    // per window
     }
   };
   
