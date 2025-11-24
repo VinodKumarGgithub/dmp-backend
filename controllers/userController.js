@@ -15,7 +15,7 @@ const {
 async function listUsers(req, res, next) {
   try {
     const users = await AdminUser.findAll({
-      attributes: ['id', 'username', 'role', 'is_blocked', 'blocked_reason', 'blocked_at', 'createdon', 'updatedon'],
+      attributes: ['id', 'username', 'name', 'email', 'phone_number', 'role', 'is_blocked', 'blocked_reason', 'blocked_at', 'createdon', 'updatedon'],
       order: [['createdon', 'DESC']],
       raw: true,
     });
@@ -41,6 +41,9 @@ async function createUser(req, res, next) {
     const schema = Joi.object({
       username: Joi.string().required().min(3).max(50).pattern(/^[a-zA-Z0-9_]+$/),
       password: Joi.string().required().min(6).max(100),
+      name: Joi.string().allow('', null).max(100).optional(),
+      email: Joi.string().email().allow('', null).max(255).optional(),
+      phone_number: Joi.string().allow('', null).max(20).optional(),
       role: Joi.string().valid('ADMIN', 'MANAGER', 'USER', 'DEVELOPER').default('USER'),
       tenantIds: Joi.array().items(Joi.string().trim()).default([]),
       pageKeys: Joi.array().items(Joi.string().trim()).default([]),
@@ -61,6 +64,9 @@ async function createUser(req, res, next) {
     const user = await AdminUser.create({
       username: data.username,
       password_hash: passwordHash,
+      name: data.name || null,
+      email: data.email || null,
+      phone_number: data.phone_number || null,
       role: data.role || 'USER',
     });
 
@@ -78,6 +84,9 @@ async function createUser(req, res, next) {
     const userResponse = {
       id: user.id,
       username: user.username,
+      name: user.name,
+      email: user.email,
+      phone_number: user.phone_number,
       role: user.role,
       createdon: user.createdon,
       updatedon: user.updatedon,
@@ -98,6 +107,9 @@ async function updateUser(req, res, next) {
     const { id } = req.params;
     const schema = Joi.object({
       password: Joi.string().min(6).max(100).optional(),
+      name: Joi.string().allow('', null).max(100).optional(),
+      email: Joi.string().email().allow('', null).max(255).optional(),
+      phone_number: Joi.string().allow('', null).max(20).optional(),
       role: Joi.string().valid('ADMIN', 'MANAGER', 'USER', 'DEVELOPER').optional(),
       tenantIds: Joi.array().items(Joi.string().trim()).optional(),
       pageKeys: Joi.array().items(Joi.string().trim()).optional(),
@@ -121,8 +133,19 @@ async function updateUser(req, res, next) {
       user.role = data.role;
     }
 
+    // Update name, email, phone_number if provided
+    if (data.name !== undefined) {
+      user.name = data.name || null;
+    }
+    if (data.email !== undefined) {
+      user.email = data.email || null;
+    }
+    if (data.phone_number !== undefined) {
+      user.phone_number = data.phone_number || null;
+    }
+
     // Save if any changes
-    if (data.password || data.role) {
+    if (data.password || data.role || data.name !== undefined || data.email !== undefined || data.phone_number !== undefined) {
       await user.save();
     }
 
@@ -148,6 +171,9 @@ async function updateUser(req, res, next) {
     const userResponse = {
       id: user.id,
       username: user.username,
+      name: user.name,
+      email: user.email,
+      phone_number: user.phone_number,
       role: user.role,
       createdon: user.createdon,
       updatedon: user.updatedon,
@@ -192,7 +218,7 @@ async function getUserById(req, res, next) {
     const { id } = req.params;
 
     const user = await AdminUser.findByPk(id, {
-      attributes: ['id', 'username', 'role', 'is_blocked', 'blocked_reason', 'blocked_at', 'createdon', 'updatedon'],
+      attributes: ['id', 'username', 'name', 'email', 'phone_number', 'role', 'is_blocked', 'blocked_reason', 'blocked_at', 'createdon', 'updatedon'],
     });
 
     if (!user) {
