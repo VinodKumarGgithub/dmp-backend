@@ -11,7 +11,8 @@ const {
 } = require('../controllers/tenantController');
 
 const router = express.Router();
-const { authMiddleware, requireAdmin } = require('../middleware/authMiddleware');
+const { authMiddleware } = require('../middleware/authMiddleware');
+const { requireAdmin } = require('../middleware/roleMiddleware');
 
 // CRUD Operations
 router.post('/', authMiddleware, requireAdmin, createTenant);

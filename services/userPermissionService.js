@@ -117,7 +117,7 @@ async function assertUserHasPageAccess(user, tenantId, pageKey) {
     throw fromCode('FORBIDDEN', ['User context missing']);
   }
 
-  if (user.role === 'ADMIN' || user.role === 'MANAGER') {
+  if (user.role === 'ADMIN' || user.role === 'MANAGER' || user.role === 'DEVELOPER') {
     return;
   }
 
@@ -134,7 +134,7 @@ async function assertUserHasPageAccess(user, tenantId, pageKey) {
 
 async function getAllowedPageKeys(user) {
   if (!user || !user.userId) return null;
-  if (user.role === 'ADMIN' || user.role === 'MANAGER') {
+  if (user.role === 'ADMIN' || user.role === 'MANAGER' || user.role === 'DEVELOPER') {
     return null;
   }
   const permissions = await getUserPermissions(user.userId);

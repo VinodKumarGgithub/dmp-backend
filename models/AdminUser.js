@@ -18,7 +18,7 @@ const AdminUser = masterSequelize.define('master_user', {
     allowNull: false
   },
   role: {
-    type: DataTypes.ENUM('ADMIN', 'MANAGER', 'USER'),
+    type: DataTypes.ENUM('ADMIN', 'MANAGER', 'USER', 'DEVELOPER'),
     allowNull: false,
     defaultValue: 'USER'
   },

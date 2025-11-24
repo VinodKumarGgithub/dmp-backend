@@ -41,7 +41,7 @@ async function createUser(req, res, next) {
     const schema = Joi.object({
       username: Joi.string().required().min(3).max(50).pattern(/^[a-zA-Z0-9_]+$/),
       password: Joi.string().required().min(6).max(100),
-      role: Joi.string().valid('ADMIN', 'MANAGER', 'USER').default('USER'),
+      role: Joi.string().valid('ADMIN', 'MANAGER', 'USER', 'DEVELOPER').default('USER'),
       tenantIds: Joi.array().items(Joi.string().trim()).default([]),
       pageKeys: Joi.array().items(Joi.string().trim()).default([]),
     });
@@ -68,7 +68,7 @@ async function createUser(req, res, next) {
     const tenantIds = Array.isArray(data.tenantIds) ? data.tenantIds : [];
     const pageKeys = Array.isArray(data.pageKeys) ? data.pageKeys : [];
 
-    if (effectiveRole !== 'ADMIN' && effectiveRole !== 'MANAGER' && tenantIds.length === 0) {
+    if (effectiveRole !== 'ADMIN' && effectiveRole !== 'MANAGER' && effectiveRole !== 'DEVELOPER' && tenantIds.length === 0) {
       return next(fromCode('VALIDATION_ERROR', ['Please assign at least one tenant']));
     }
 
@@ -98,7 +98,7 @@ async function updateUser(req, res, next) {
     const { id } = req.params;
     const schema = Joi.object({
       password: Joi.string().min(6).max(100).optional(),
-      role: Joi.string().valid('ADMIN', 'MANAGER', 'USER').optional(),
+      role: Joi.string().valid('ADMIN', 'MANAGER', 'USER', 'DEVELOPER').optional(),
       tenantIds: Joi.array().items(Joi.string().trim()).optional(),
       pageKeys: Joi.array().items(Joi.string().trim()).optional(),
     });
@@ -133,7 +133,7 @@ async function updateUser(req, res, next) {
       const tenantIds = data.tenantIds !== undefined ? data.tenantIds : currentPermissions.tenants;
       const pageKeys = data.pageKeys !== undefined ? data.pageKeys : currentPermissions.pages;
 
-      if (user.role !== 'ADMIN' && user.role !== 'MANAGER' && tenantIds.length === 0) {
+      if (user.role !== 'ADMIN' && user.role !== 'MANAGER' && user.role !== 'DEVELOPER' && tenantIds.length === 0) {
         return next(fromCode('VALIDATION_ERROR', ['Please assign at least one tenant']));
       }
 

@@ -31,6 +31,7 @@ const ERROR_CATALOG = {
   DB_UNKNOWN_TABLE: { message: 'Referenced table or view does not exist', status: 400 },
   DB_QUERY_ERROR: { message: 'Database query failed', status: 400 },
   USER_BLOCKED: { message: 'User account is blocked', status: 403 },
+  DANGEROUS_SQL_DETECTED: { message: 'Dangerous SQL detected', status: 403 },
 };
 
 function createError(code, message, status, details) {

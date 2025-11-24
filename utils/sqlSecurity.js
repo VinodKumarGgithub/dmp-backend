@@ -126,8 +126,9 @@ function validateReadOnly(sql) {
   // Check for dangerous keywords
   const dangerousCheck = containsDangerousKeywords(sql);
   if (dangerousCheck.dangerous) {
-    throw fromCode('PAGE_CONFIG_INVALID', [
-      `SQL query contains forbidden keyword: ${dangerousCheck.keyword}. Only read-only queries are allowed.`
+    throw fromCode('DANGEROUS_SQL_DETECTED', [
+      `SQL query contains forbidden keyword: ${dangerousCheck.keyword}`,
+      'Only read-only queries (SELECT statements) are allowed'
     ]);
   }
 
@@ -182,16 +183,22 @@ async function validateProcedureSql(sql, options = {}) {
     const dangerousCheck = containsDangerousKeywords(sanitized);
     if (dangerousCheck.dangerous) {
       // Block user if dangerous SQL detected
+      let blockingReason = null;
       if (username) {
-        const reason = `Attempted to use dangerous SQL keyword: ${dangerousCheck.keyword}. This is a security violation.`;
-        await userBlockingService.blockUserByUsername(username, reason).catch(err => {
+        blockingReason = `Attempted to use dangerous SQL keyword: ${dangerousCheck.keyword}. This is a security violation.`;
+        await userBlockingService.blockUserByUsername(username, blockingReason).catch(err => {
           console.error('Failed to block user after dangerous SQL detection:', err);
         });
       }
       
-      throw fromCode('PAGE_CONFIG_INVALID', [
-        `SQL query contains forbidden keyword: ${dangerousCheck.keyword}. Only read-only queries are allowed. Your account has been blocked for security reasons.`
-      ]);
+      // Throw proper error with details
+      const errorDetails = [
+        `SQL query contains forbidden keyword: ${dangerousCheck.keyword}`,
+        'Only read-only queries (SELECT statements) are allowed',
+        username ? 'Your account has been automatically blocked for security reasons. Please contact an administrator.' : null
+      ].filter(Boolean);
+      
+      throw fromCode('DANGEROUS_SQL_DETECTED', errorDetails);
     }
   }
 

@@ -27,20 +27,9 @@ async function authMiddleware(req, res, next) {
   }
 }
 
-async function requireAdmin(req, res, next) {
-  try {
-    if (!req.user || req.user.role !== 'ADMIN') return next(fromCode('FORBIDDEN'));
+// requireAdmin is now in roleMiddleware.js to avoid circular dependencies
+// This file only exports authMiddleware
 
-    // optional: verify user still exists in DB
-    const admin = await AdminUser.findOne({ where: { username: req.user.username } });
-    if (!admin) return next(fromCode('FORBIDDEN'));
-
-    next();
-  } catch (err) {
-    return next(fromCode('AUTHFAILED'));
-  }
-}
-
-module.exports = { authMiddleware, requireAdmin };
+module.exports = { authMiddleware };
 
 

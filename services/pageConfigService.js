@@ -58,7 +58,7 @@ const pageConfigService = {
     const data = validate(schema, payload);
 
     // Validate SQL if it's a PROCEDURE type with p_sql
-    if (sourceType === 'PROCEDURE' && Array.isArray(data.source_params)) {
+    if (data.source_type === 'PROCEDURE' && Array.isArray(data.source_params)) {
       const pSqlParam = data.source_params.find(p => p && p.name === 'p_sql');
       if (pSqlParam && pSqlParam.value) {
         const username = user?.username || null;
