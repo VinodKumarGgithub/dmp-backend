@@ -37,6 +37,11 @@ const AdminUser = masterSequelize.define('master_user', {
     allowNull: true,
     max: 20
   },
+  profile_picture: {
+    type: DataTypes.TEXT,
+    allowNull: true,
+    comment: 'Base64 encoded profile picture'
+  },
   is_blocked: {
     type: DataTypes.BOOLEAN,
     allowNull: false,

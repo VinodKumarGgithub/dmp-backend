@@ -34,7 +34,8 @@ async function login(req, res, next) {
         userId: user.id,
         name: user.name,
         email: user.email,
-        phone_number: user.phone_number
+        phone_number: user.phone_number,
+        profile_picture: user.profile_picture
       },
       process.env.JWT_SECRET || 'changeme',
       { expiresIn: '12h' }

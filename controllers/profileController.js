@@ -16,7 +16,7 @@ async function getCurrentProfile(req, res, next) {
     }
 
     const user = await AdminUser.findByPk(userId, {
-      attributes: ['id', 'username', 'name', 'email', 'phone_number', 'role', 'createdon', 'updatedon'],
+      attributes: ['id', 'username', 'name', 'email', 'phone_number', 'role', 'profile_picture', 'createdon', 'updatedon'],
     });
 
     if (!user) {
@@ -87,6 +87,7 @@ async function updateProfile(req, res, next) {
       email: user.email,
       phone_number: user.phone_number,
       role: user.role,
+      profile_picture: user.profile_picture,
       createdon: user.createdon,
       updatedon: user.updatedon,
     };
@@ -221,11 +222,85 @@ async function updatePreferences(req, res, next) {
   }
 }
 
+// Upload/Update profile picture
+async function updateProfilePicture(req, res, next) {
+  try {
+    const userId = req.user?.userId || req.user?.id;
+    if (!userId) {
+      return next(fromCode('UNAUTHORIZED', ['User ID not found in token']));
+    }
+
+    const schema = Joi.object({
+      profile_picture: Joi.string().allow('', null).optional(),
+    });
+
+    const data = validate(schema, req.body);
+
+    const user = await AdminUser.findByPk(userId);
+    if (!user) {
+      return next(fromCode('NOT_FOUND', ['User not found']));
+    }
+
+    // Validate base64 image if provided
+    if (data.profile_picture !== undefined && data.profile_picture !== null && data.profile_picture !== '') {
+      // Check if it's a valid base64 image
+      const base64Regex = /^data:image\/(png|jpg|jpeg|gif|webp);base64,/;
+      if (!base64Regex.test(data.profile_picture)) {
+        return next(fromCode('VALIDATION_ERROR', ['Invalid image format. Please provide a valid base64 encoded image.']));
+      }
+
+      // Check size (max 2MB when base64 encoded)
+      const base64Data = data.profile_picture.split(',')[1];
+      const sizeInBytes = (base64Data.length * 3) / 4;
+      const maxSize = 2 * 1024 * 1024; // 2MB
+      if (sizeInBytes > maxSize) {
+        return next(fromCode('VALIDATION_ERROR', ['Image size exceeds 2MB limit. Please use a smaller image.']));
+      }
+    }
+
+    // Update profile picture
+    user.profile_picture = data.profile_picture || null;
+    user.updatedon = new Date();
+    await user.save();
+
+    res.json(success({ profile_picture: user.profile_picture }, 'Profile picture updated successfully'));
+  } catch (err) {
+    if (err.code) return next(err);
+    next(mapDbError(err));
+  }
+}
+
+// Remove profile picture
+async function removeProfilePicture(req, res, next) {
+  try {
+    const userId = req.user?.userId || req.user?.id;
+    if (!userId) {
+      return next(fromCode('UNAUTHORIZED', ['User ID not found in token']));
+    }
+
+    const user = await AdminUser.findByPk(userId);
+    if (!user) {
+      return next(fromCode('NOT_FOUND', ['User not found']));
+    }
+
+    user.profile_picture = null;
+    user.updatedon = new Date();
+    await user.save();
+
+    res.json(success({ message: 'Profile picture removed successfully' }, 'Profile picture removed successfully'));
+  } catch (err) {
+    if (err.code) return next(err);
+    next(mapDbError(err));
+  }
+}
+
 module.exports = {
   getCurrentProfile,
   updateProfile,
   changePassword,
   getPreferences,
   updatePreferences,
+  updateProfilePicture,
+  removeProfilePicture,
 };
 
