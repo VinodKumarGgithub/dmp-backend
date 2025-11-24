@@ -4,6 +4,7 @@ const pageMasterRoutes = require('./pageMasterRoutes');
 const pageTenantRoutes = require('./pageTenantRoutes');
 const userRoutes = require('./userRoutes');
 const userPreferenceRoutes = require('./userPreferenceRoutes');
+const adminRoutes = require('./adminRoutes');
 const { tenantResolver } = require('../middleware/tenantResolver');
 const { login } = require('../controllers/authController');
 
@@ -17,6 +18,7 @@ router.use('/users', userRoutes); // Admin user management routes
 router.use('/tenants', tenantRegistryRoutes);
 router.use('/pages', pageMasterRoutes);
 router.use('/page-preferences', userPreferenceRoutes);
+router.use('/admin', adminRoutes); // Admin feature control and user blocking routes
 
 // Tenant-aware routes (with tenant resolution)
 router.use(tenantResolver);

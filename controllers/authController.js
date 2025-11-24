@@ -15,6 +15,13 @@ async function login(req, res, next) {
       return next(fromCode("INVALID_CREDS"));
     }
 
+    // Check if user is blocked before password verification
+    if (user.is_blocked) {
+      return next(fromCode('USER_BLOCKED', [
+        user.blocked_reason || 'Your account has been blocked. Please contact an administrator.'
+      ]));
+    }
+
     const ok = await bcrypt.compare(password, user.password_hash);
     if (!ok) {
       return next(fromCode("INVALID_CREDS"));;

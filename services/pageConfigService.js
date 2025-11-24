@@ -3,10 +3,11 @@ const { generateId } = require('../utils/idGenerator');
 const { fromCode } = require('../utils/errors');
 const { mapDbError } = require('../utils/dbErrorMapper');
 const { PageConfig } = require('../models/PageConfig');
+const { validateProcedureSql } = require('../utils/sqlSecurity');
 
 const pageConfigService = {
   // Create new page config
-  async createPageConfig(masterDb, payload) {
+  async createPageConfig(masterDb, payload, user = null) {
     const schema = Joi.object({
       page_key: Joi.string().required().min(1).max(100).pattern(/^[a-zA-Z0-9_-]+$/),
       title: Joi.string().required().min(1).max(200),
@@ -56,6 +57,20 @@ const pageConfigService = {
 
     const data = validate(schema, payload);
 
+    // Validate SQL if it's a PROCEDURE type with p_sql
+    if (sourceType === 'PROCEDURE' && Array.isArray(data.source_params)) {
+      const pSqlParam = data.source_params.find(p => p && p.name === 'p_sql');
+      if (pSqlParam && pSqlParam.value) {
+        const username = user?.username || null;
+        await validateProcedureSql(pSqlParam.value, {
+          checkReadOnly: true,
+          checkComplexity: true,
+          maxTimeout: 30000,
+          username: username
+        });
+      }
+    }
+
     // Check if page_key already exists
     const existing = await PageConfig.findOne({
       where: { page_key: data.page_key },
@@ -96,7 +111,7 @@ const pageConfigService = {
   },
 
   // Update page config
-  async updatePageConfig(masterDb, pageKey, payload) {
+  async updatePageConfig(masterDb, pageKey, payload, user = null) {
     const schema = Joi.object({
       title: Joi.string().min(1).max(200),
       data_source: Joi.string().min(1).max(100).pattern(/^[a-zA-Z_][a-zA-Z0-9_]*$/),
@@ -141,6 +156,21 @@ const pageConfigService = {
     });
 
     const data = validate(schema, payload);
+
+    // Validate SQL if updating to PROCEDURE type with p_sql
+    if (data.source_type === 'PROCEDURE' && Array.isArray(data.source_params)) {
+      const pSqlParam = data.source_params.find(p => p && p.name === 'p_sql');
+      if (pSqlParam && pSqlParam.value) {
+        const username = user?.username || null;
+        await validateProcedureSql(pSqlParam.value, {
+          checkReadOnly: true,
+          checkComplexity: true,
+          maxTimeout: 30000,
+          username: username
+        });
+      }
+    }
+
     const txn = await masterDb.transaction();
 
     try {

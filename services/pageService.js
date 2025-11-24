@@ -641,7 +641,7 @@ const pageService = {
     return { whereClause, orderBy, limit, offset, replacements, data_source };
   },
 
-  buildProcedureSql(config, queryParams, sequelize, options = {}, baseSqlOverride) {
+  async buildProcedureSql(config, queryParams, sequelize, options = {}, baseSqlOverride) {
     if (!sequelize) {
       throw fromCode('TENANT_DB_NOT_AVAILABLE');
     }
@@ -656,8 +656,9 @@ const pageService = {
     }
 
     // Security validation: validate p_sql is safe and read-only
+    // Note: username not available in this context, but validation will still work
     try {
-      validateProcedureSql(resolvedBaseSql, {
+      await validateProcedureSql(resolvedBaseSql, {
         checkReadOnly: true,
         checkComplexity: true,
         maxTimeout: 30000
@@ -944,7 +945,8 @@ const pageService = {
     }
 
     // Validate SQL safety
-    validateProcedureSql(trimmedSql, {
+    // Note: username not available in this context, but validation will still work
+    await validateProcedureSql(trimmedSql, {
       checkReadOnly: true,
       checkComplexity: true,
       maxTimeout: 30000
@@ -1082,7 +1084,7 @@ const pageService = {
       try {
         const { baseSql, remainingParams } = extractProcedureSql(source_params);
         if (baseSql) {
-          const procedureQuery = this.buildProcedureSql(
+          const procedureQuery = await this.buildProcedureSql(
             config,
             queryParams,
             tenantSequelize,
@@ -1453,7 +1455,7 @@ const pageService = {
       try {
         const { baseSql, remainingParams } = extractProcedureSql(source_params);
         if (baseSql) {
-          const procedureQuery = this.buildProcedureSql(
+          const procedureQuery = await this.buildProcedureSql(
             config,
             queryParams,
             tenantSequelize,

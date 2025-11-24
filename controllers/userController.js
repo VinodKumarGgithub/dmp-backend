@@ -15,8 +15,8 @@ const {
 async function listUsers(req, res, next) {
   try {
     const users = await AdminUser.findAll({
-      attributes: ['id', 'username', 'role', 'created_at', 'updated_at'],
-      order: [['created_at', 'DESC']],
+      attributes: ['id', 'username', 'role', 'is_blocked', 'blocked_reason', 'blocked_at', 'createdon', 'updatedon'],
+      order: [['createdon', 'DESC']],
       raw: true,
     });
     const userIds = users.map((user) => user.id);
@@ -79,8 +79,8 @@ async function createUser(req, res, next) {
       id: user.id,
       username: user.username,
       role: user.role,
-      created_at: user.created_at,
-      updated_at: user.updated_at,
+      createdon: user.createdon,
+      updatedon: user.updatedon,
       tenant_permissions: permissions.tenants,
       page_permissions: permissions.pages,
     };
@@ -149,8 +149,8 @@ async function updateUser(req, res, next) {
       id: user.id,
       username: user.username,
       role: user.role,
-      created_at: user.created_at,
-      updated_at: user.updated_at,
+      createdon: user.createdon,
+      updatedon: user.updatedon,
       ...permissionsPayload,
     };
 
@@ -192,7 +192,7 @@ async function getUserById(req, res, next) {
     const { id } = req.params;
 
     const user = await AdminUser.findByPk(id, {
-      attributes: ['id', 'username', 'role', 'created_at', 'updated_at'],
+      attributes: ['id', 'username', 'role', 'is_blocked', 'blocked_reason', 'blocked_at', 'createdon', 'updatedon'],
     });
 
     if (!user) {

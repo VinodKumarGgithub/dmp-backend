@@ -21,7 +21,7 @@ module.exports = {
   // POST /api/pages (create page config)
   async createPageConfig(req, res, next) {
     try {
-      const pageConfig = await pageConfigService.createPageConfig(masterSequelize, req.body);
+      const pageConfig = await pageConfigService.createPageConfig(masterSequelize, req.body, req.user);
       res.status(201).json(success(pageConfig, 'Page config created successfully'));
     } catch (err) {
       next(err);
@@ -32,7 +32,7 @@ module.exports = {
   async updatePageConfig(req, res, next) {
     try {
       const { pageKey } = req.params;
-      const pageConfig = await pageConfigService.updatePageConfig(masterSequelize, pageKey, req.body);
+      const pageConfig = await pageConfigService.updatePageConfig(masterSequelize, pageKey, req.body, req.user);
       res.json(success(pageConfig, 'Page config updated successfully'));
     } catch (err) {
       next(err);
@@ -273,6 +273,21 @@ module.exports = {
         config.source_params.push({ name: 'p_sql', value: p_sql });
       }
 
+      // Validate SQL before building query (with user blocking on dangerous SQL)
+      const { validateProcedureSql } = require('../utils/sqlSecurity');
+      const username = req.user?.username || null;
+      try {
+        await validateProcedureSql(p_sql, {
+          checkReadOnly: true,
+          checkComplexity: true,
+          maxTimeout: 30000,
+          username: username
+        });
+      } catch (validationError) {
+        // Re-throw validation errors (user may have been blocked)
+        return next(validationError);
+      }
+
       // Build the query with test parameters
       const startTime = Date.now();
       let executionTime = 0;
@@ -282,7 +297,7 @@ module.exports = {
       let data = [];
 
       try {
-        const procedureQuery = pageService.buildProcedureSql(
+        const procedureQuery = await pageService.buildProcedureSql(
           config,
           queryParams,
           req.db.sequelize,

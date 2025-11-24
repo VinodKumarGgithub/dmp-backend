@@ -22,20 +22,39 @@ const AdminUser = masterSequelize.define('master_user', {
     allowNull: false,
     defaultValue: 'USER'
   },
-  created_at: {
-    type: DataTypes.DATE,
+  is_blocked: {
+    type: DataTypes.BOOLEAN,
     allowNull: false,
-    defaultValue: DataTypes.NOW
+    defaultValue: false
   },
-  updated_at: {
+  blocked_reason: {
+    type: DataTypes.TEXT,
+    allowNull: true
+  },
+  blocked_at: {
+    type: DataTypes.DATE,
+    allowNull: true
+  },
+  createdon: {
     type: DataTypes.DATE,
     allowNull: false,
-    defaultValue: DataTypes.NOW
+    defaultValue: DataTypes.NOW,
+    field: 'createdon'
+  },
+  updatedon: {
+    type: DataTypes.DATE,
+    allowNull: false,
+    defaultValue: DataTypes.NOW,
+    field: 'updatedon'
   }
 }, {
   tableName: 'master_users',
   timestamps: false
 });
+
+// DO NOT use sync({ alter: true }) in production - it can cause issues with existing tables
+// Use migrations instead. This sync is disabled to prevent "Too many keys" errors.
+// AdminUser.sync({ alter: true });
 
 module.exports = { AdminUser };
 

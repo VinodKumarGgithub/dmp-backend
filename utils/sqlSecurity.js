@@ -1,4 +1,5 @@
 const { fromCode } = require('./errors');
+const { userBlockingService } = require('../services/userBlockingService');
 
 /**
  * SQL Security Utility
@@ -155,12 +156,18 @@ function sanitizeSql(sql) {
 
 /**
  * Comprehensive SQL validation for p_sql
+ * @param {string} sql - SQL query to validate
+ * @param {object} options - Validation options
+ * @param {string} options.userId - User ID for blocking on dangerous SQL (optional)
+ * @param {string} options.username - Username for blocking on dangerous SQL (optional)
  */
-function validateProcedureSql(sql, options = {}) {
+async function validateProcedureSql(sql, options = {}) {
   const {
     checkReadOnly = true,
     checkComplexity = true,
-    maxTimeout = 30000 // 30 seconds default
+    maxTimeout = 30000, // 30 seconds default
+    userId = null,
+    username = null
   } = options;
 
   if (!sql || typeof sql !== 'string' || !sql.trim()) {
@@ -169,6 +176,24 @@ function validateProcedureSql(sql, options = {}) {
 
   // Sanitize first
   const sanitized = sanitizeSql(sql);
+
+  // Check for dangerous keywords first (before other validations)
+  if (checkReadOnly) {
+    const dangerousCheck = containsDangerousKeywords(sanitized);
+    if (dangerousCheck.dangerous) {
+      // Block user if dangerous SQL detected
+      if (username) {
+        const reason = `Attempted to use dangerous SQL keyword: ${dangerousCheck.keyword}. This is a security violation.`;
+        await userBlockingService.blockUserByUsername(username, reason).catch(err => {
+          console.error('Failed to block user after dangerous SQL detection:', err);
+        });
+      }
+      
+      throw fromCode('PAGE_CONFIG_INVALID', [
+        `SQL query contains forbidden keyword: ${dangerousCheck.keyword}. Only read-only queries are allowed. Your account has been blocked for security reasons.`
+      ]);
+    }
+  }
 
   // Validate read-only
   if (checkReadOnly) {
