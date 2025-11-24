@@ -1,6 +1,7 @@
 const { success } = require('../utils/responseHandler');
 const { userBlockingService } = require('../services/userBlockingService');
 const { AdminUser } = require('../models/AdminUser');
+const { PageConfig } = require('../models/PageConfig');
 const { fromCode } = require('../utils/errors');
 
 module.exports = {
@@ -68,6 +69,77 @@ module.exports = {
       res.json(success(usersList, 'Users fetched successfully'));
     } catch (err) {
       next(err);
+    }
+  },
+
+  // GET /api/admin/pages/:pageKey/tenants - Get tenant access for a page
+  async getPageTenantAccess(req, res, next) {
+    try {
+      const { pageKey } = req.params;
+      const page = await PageConfig.findOne({ where: { page_key: pageKey } });
+      
+      if (!page) {
+        return next(fromCode('PAGE_NOT_FOUND', [`Page '${pageKey}' not found`]));
+      }
+
+      // Parse tenant access JSON
+      let tenantIds = [];
+      if (page.tenant_access_json) {
+        try {
+          tenantIds = JSON.parse(page.tenant_access_json);
+          if (!Array.isArray(tenantIds)) tenantIds = [];
+        } catch {
+          tenantIds = [];
+        }
+      }
+
+      res.json(success({ 
+        pageKey, 
+        tenantIds,
+        isGeneric: tenantIds.length === 0 
+      }, 'Page tenant access fetched successfully'));
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // PUT /api/admin/pages/:pageKey/tenants - Update tenant access for a page
+  async updatePageTenantAccess(req, res, next) {
+    try {
+      const { pageKey } = req.params;
+      const { tenantIds } = req.body;
+
+      if (!Array.isArray(tenantIds)) {
+        return next(fromCode('VALIDATION_ERROR', ['tenantIds must be an array']));
+      }
+
+      const page = await PageConfig.findOne({ where: { page_key: pageKey } });
+      
+      if (!page) {
+        return next(fromCode('PAGE_NOT_FOUND', [`Page '${pageKey}' not found`]));
+      }
+
+      // Update tenant_access_json
+      // Empty array or null = generic (all tenants)
+      // Non-empty array = only these tenants
+      if (tenantIds.length === 0) {
+        page.tenant_access_json = null;
+      } else {
+        // Validate tenant IDs are strings
+        const validTenantIds = tenantIds.filter(id => typeof id === 'string' && id.trim().length > 0);
+        page.tenant_access_json = JSON.stringify(validTenantIds);
+      }
+
+      await page.save();
+
+      res.json(success({ 
+        pageKey, 
+        tenantIds: tenantIds.length === 0 ? [] : tenantIds,
+        isGeneric: tenantIds.length === 0 
+      }, 'Page tenant access updated successfully'));
+    } catch (err) {
+      if (err.code) return next(err);
+      next(fromCode('INTERNAL_ERROR', [err.message]));
     }
   }
 };

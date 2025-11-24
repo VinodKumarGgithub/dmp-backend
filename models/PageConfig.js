@@ -67,6 +67,11 @@ const PageConfig = masterSequelize.define('page_config', {
     type: DataTypes.INTEGER,
     allowNull: false,
     defaultValue: 20
+  },
+  tenant_access_json: {
+    type: DataTypes.TEXT,
+    allowNull: true,
+    comment: 'JSON array of tenant IDs. NULL or empty = available to all tenants'
   }
 }, {
   tableName: 'page_configs',

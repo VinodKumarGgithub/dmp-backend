@@ -11,7 +11,8 @@ module.exports = {
   async listPages(req, res, next) {
     try {
       const allowedPageKeys = await getAllowedPageKeys(req.user);
-      const pages = await pageService.listPages(allowedPageKeys);
+      const tenantId = req.db?.tenantId; // From tenantResolver middleware
+      const pages = await pageService.listPages(allowedPageKeys, tenantId, req.user?.role);
       res.json(success(pages, 'Pages fetched successfully'));
     } catch (err) {
       next(err);
@@ -54,7 +55,8 @@ module.exports = {
   async getPageConfig(req, res, next) {
     try {
       const { pageKey } = req.params;
-      const config = await pageService.getPageConfigByKey(pageKey);
+      const tenantId = req.db?.tenantId; // May be null for admin operations
+      const config = await pageService.getPageConfigByKey(pageKey, tenantId, req.user?.role);
       res.json(success(config, 'Page config fetched successfully'));
     } catch (err) {
       next(err);
@@ -68,7 +70,7 @@ module.exports = {
       if (!req.db || !req.db.sequelize) {
         return next(fromCode('TENANT_DB_NOT_AVAILABLE'));
       }
-      const config = await pageService.getPageConfigByKey(pageKey);
+      const config = await pageService.getPageConfigByKey(pageKey, req.db?.tenantId, req.user?.role);
       await assertUserHasPageAccess(req.user, req.db?.tenantId, config.page_key);
       // Pass req.db directly to use tenant database connection
       // Include audit context for logging
@@ -90,7 +92,7 @@ module.exports = {
       if (!req.db || !req.db.sequelize) {
         return next(fromCode('TENANT_DB_NOT_AVAILABLE'));
       }
-      const config = await pageService.getPageConfigByKey(pageKey);
+      const config = await pageService.getPageConfigByKey(pageKey, req.db?.tenantId, req.user?.role);
       await assertUserHasPageAccess(req.user, req.db?.tenantId, config.page_key);
       // Pass req.db directly to use tenant database connection
       // Include audit context for logging

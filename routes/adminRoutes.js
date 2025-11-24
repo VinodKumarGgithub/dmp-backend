@@ -14,5 +14,9 @@ router.get('/users/blocked', adminController.getBlockedUsers);
 router.post('/users/:userId/block', adminController.blockUser);
 router.post('/users/:userId/unblock', adminController.unblockUser);
 
+// Page tenant access routes
+router.get('/pages/:pageKey/tenants', adminController.getPageTenantAccess);
+router.put('/pages/:pageKey/tenants', adminController.updatePageTenantAccess);
+
 module.exports = router;
 

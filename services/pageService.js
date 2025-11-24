@@ -452,17 +452,73 @@ async function countSqlRows(sql, replacements, sequelize) {
   return 0;
 }
 
+/**
+ * Get tenant IDs from page config's tenant_access_json
+ */
+function getPageTenants(pageConfig) {
+  if (!pageConfig || !pageConfig.tenant_access_json) return [];
+  try {
+    const tenants = JSON.parse(pageConfig.tenant_access_json);
+    return Array.isArray(tenants) ? tenants : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Check if a page is accessible to a tenant
+ * @param {Object} pageConfig - Page configuration object
+ * @param {string} tenantId - Tenant ID to check
+ * @param {string} userRole - User role (ADMIN sees all)
+ * @returns {boolean}
+ */
+function isPageAccessible(pageConfig, tenantId, userRole) {
+  // Admin users see all pages
+  if (userRole === 'ADMIN') return true;
+  
+  // If no tenant context, allow (for admin operations)
+  if (!tenantId) return true;
+  
+  const tenants = getPageTenants(pageConfig);
+  
+  // Empty array = generic (all tenants can access)
+  if (tenants.length === 0) return true;
+  
+  // Has values = only these tenants
+  return tenants.includes(tenantId);
+}
+
+/**
+ * Filter pages by tenant access (batch operation)
+ * @param {Array} pages - Array of page configs
+ * @param {string} tenantId - Tenant ID to filter by
+ * @param {string} userRole - User role
+ * @returns {Array} Filtered pages
+ */
+function filterPagesByTenant(pages, tenantId, userRole) {
+  if (userRole === 'ADMIN') return pages;
+  if (!tenantId) return pages;
+  
+  return pages.filter(page => isPageAccessible(page, tenantId, userRole));
+}
+
 const pageService = {
-  async listPages(pageKeyFilter = null) {
+  async listPages(pageKeyFilter = null, tenantId = null, userRole = null) {
     try {
       const where = {};
       if (Array.isArray(pageKeyFilter) && pageKeyFilter.length > 0) {
         where.page_key = pageKeyFilter;
       }
       const pages = await PageConfig.findAll({
-        attributes: ['page_key', 'title', 'is_download_allowed', 'download_row_limit'],
+        attributes: ['page_key', 'title', 'is_download_allowed', 'download_row_limit', 'tenant_access_json'],
         where,
       });
+      
+      // Filter by tenant access (in-memory, fast)
+      if (tenantId || userRole) {
+        return filterPagesByTenant(pages, tenantId, userRole);
+      }
+      
       return pages;
     } catch (error) {
       if (error.code) throw error; // Already mapped
@@ -470,7 +526,7 @@ const pageService = {
     }
   },
 
-  async getPageConfigByKey(pageKey) {
+  async getPageConfigByKey(pageKey, tenantId = null, userRole = null) {
     if (!pageKey || typeof pageKey !== 'string') {
       throw fromCode('VALIDATION_ERROR', ['Page key is required and must be a string']);
     }
@@ -479,6 +535,11 @@ const pageService = {
       const page = await PageConfig.findOne({ where: { page_key: pageKey } });
       if (!page) {
         throw fromCode('PAGE_NOT_FOUND', [`Page config not found for key: ${pageKey}`]);
+      }
+
+      // Check tenant access
+      if (!isPageAccessible(page, tenantId, userRole)) {
+        throw fromCode('FORBIDDEN', [`Page '${pageKey}' is not accessible for this tenant`]);
       }
 
       try {
