@@ -3,7 +3,7 @@ FROM node:20-alpine
 
 
 # Set working directory
-WORKDIR /PBM
+WORKDIR /DATAMANAGEMENT
 
 # Install git (if not already in Node image)
 # RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
