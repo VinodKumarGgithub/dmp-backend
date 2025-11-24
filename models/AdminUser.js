@@ -22,6 +22,21 @@ const AdminUser = masterSequelize.define('master_user', {
     allowNull: false,
     defaultValue: 'USER'
   },
+  name: {
+    type: DataTypes.STRING,
+    allowNull: true,
+    max: 100
+  },
+  email: {
+    type: DataTypes.STRING,
+    allowNull: true,
+    max: 255
+  },
+  phone_number: {
+    type: DataTypes.STRING,
+    allowNull: true,
+    max: 20
+  },
   is_blocked: {
     type: DataTypes.BOOLEAN,
     allowNull: false,
