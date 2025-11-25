@@ -1,4 +1,4 @@
-const { fromCode, createError } = require('./errors');
+const { fromCode, createError, ERROR_CATALOG } = require('./errors');
 
 function mapDbError(error) {
   const message = (error && error.message) || '';
@@ -20,52 +20,52 @@ function mapDbError(error) {
       });
     }
 
-    const friendlyMessage =
-      details.length > 0
-        ? `Duplicate entry: ${details.join(', ')}`
-        : 'Duplicate value violates unique constraint';
-
-    return attachContext(fromCode('DB_DUPLICATE_KEY', [friendlyMessage]));
+    // Use ERROR_CATALOG message as base, add specific details if available
+    const baseMessage = ERROR_CATALOG.DB_DUPLICATE_KEY.message;
+    const friendlyDetails = details.length > 0 ? details : [baseMessage];
+    return attachContext(fromCode('DB_DUPLICATE_KEY', friendlyDetails));
   }
 
   if (code === 'ER_ACCESS_DENIED_ERROR' || code === 'ELOGIN') {
-    return attachContext(fromCode('DB_AUTH_FAILED', ['Database credentials are invalid']));
+    return attachContext(fromCode('DB_AUTH_FAILED'));
   }
 
   if (code === 'ENOTFOUND' || code === 'ECONNREFUSED' || code === 'EHOSTUNREACH') {
-    return attachContext(fromCode('DB_HOST_UNREACHABLE', ['Database host/port unreachable']));
+    return attachContext(fromCode('DB_HOST_UNREACHABLE'));
   }
 
   if (code === 'ER_BAD_DB_ERROR') {
-    return attachContext(fromCode('DB_NAME_NOT_FOUND', ['Database name does not exist']));
+    return attachContext(fromCode('DB_NAME_NOT_FOUND'));
   }
 
   if (name && name.startsWith('SequelizeConnection')) {
-    const details = message ? [message] : ['Database connection failed'];
+    // Use ERROR_CATALOG message, but include original message in details if available
+    const details = message ? [ERROR_CATALOG.DB_CONNECTION_FAILED.message] : undefined;
     return attachContext(fromCode('DB_CONNECTION_FAILED', details));
   }
 
   if (name === 'SequelizeDatabaseError') {
     const lower = (message || '').toLowerCase();
-    const details = message ? [message] : undefined;
 
     if (lower.includes('unknown column') || lower.includes("doesn't exist") && lower.includes('column')) {
-      return attachContext(fromCode('DB_UNKNOWN_COLUMN', details || ['Unknown column referenced in query']));
+      return attachContext(fromCode('DB_UNKNOWN_COLUMN'));
     }
 
     if (lower.includes('unknown table') || lower.includes("doesn't exist") && lower.includes('table')) {
-      return attachContext(fromCode('DB_UNKNOWN_TABLE', details || ['Unknown table referenced in query']));
+      return attachContext(fromCode('DB_UNKNOWN_TABLE'));
     }
 
     if (lower.includes('syntax')) {
-      return attachContext(fromCode('DB_SYNTAX_ERROR', details || ['SQL syntax error']));
+      return attachContext(fromCode('DB_SYNTAX_ERROR'));
     }
 
-    return attachContext(fromCode('DB_QUERY_ERROR', details || ['Database query failed']));
+    // Default database error - use ERROR_CATALOG message
+    return attachContext(fromCode('DB_QUERY_ERROR'));
   }
 
-  const fallbackDetails = message ? [message] : ['Database operation failed'];
-  return attachContext(createError('INTERNAL_ERROR', 'Database operation failed', 500, fallbackDetails));
+  // Fallback to INTERNAL_ERROR with user-friendly message from ERROR_CATALOG
+  const fallbackDetails = message ? [message] : [ERROR_CATALOG.INTERNAL_ERROR.message];
+  return attachContext(createError('INTERNAL_ERROR', ERROR_CATALOG.INTERNAL_ERROR.message, 500, fallbackDetails));
 }
 
 module.exports = { mapDbError };

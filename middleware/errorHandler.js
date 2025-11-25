@@ -3,21 +3,31 @@ const { ERROR_CATALOG } = require('../utils/errors');
 
 function errorHandler(err, req, res, next) {
   logger.error('Unhandled error', { message: err.message, stack: err.stack });
-  const status = err.status || 500;
+  
+  // Determine error code and get message from ERROR_CATALOG (centralized source)
+  const errorCode = err.code || 'INTERNAL_ERROR';
+  const catalogEntry = ERROR_CATALOG[errorCode];
+  
+  // Use error's message if it exists (may be user-friendly from createErrorWithContext)
+  // Otherwise fall back to ERROR_CATALOG message
+  // This ensures all errors use centralized, user-friendly messages
+  const message = err.message || (catalogEntry && catalogEntry.message) || ERROR_CATALOG.INTERNAL_ERROR.message;
+  const status = err.status || (catalogEntry && catalogEntry.status) || 500;
 
   const response = {
     success: false,
     error: {
-      message: err.message || (ERROR_CATALOG[err.code] && ERROR_CATALOG[err.code].message) || 'Internal Server Error',
-      code: err.code || 'INTERNAL_ERROR'
+      message: message,
+      code: errorCode
     }
   };
 
+  // Include details if available (may contain user-friendly messages)
   if (err.details) {
     response.error.details = err.details;
   }
 
-  // Include query context if available (for enhanced error messages)
+  // Include query context if available (for enhanced error messages with hints)
   if (err.queryContext) {
     response.error.queryContext = err.queryContext;
   }

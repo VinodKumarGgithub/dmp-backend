@@ -1,37 +1,51 @@
-// Central error catalog: define messages and status by code here
+// Central error catalog: define user-friendly messages and status by code here
+// All messages should be written for non-technical users
 const ERROR_CATALOG = {
-  VALIDATION_ERROR: { message: 'Validation error', status: 400 },
-  CREDS_REQUIRED: { message: 'username and password are required', status:400 },
-  INVALID_CREDS: { message:"Invalid credentials", status:401},
-  UNAUTHORIZED: { message: 'Unauthorized', status: 401 },
-  INVALIDTOKEN: { message: 'Invalid token', status: 401 },
-  FORBIDDEN: { message: 'Forbidden', status: 403 },
-  AUTHFAILED: { message: 'Auth verification failed', status: 500 },
-  NOT_FOUND: { message: 'Resource not found', status: 404 },
-  CONFLICT: { message: 'Conflict', status: 409 },
-  TENANT_NOT_FOUND: { message: 'Tenant not found', status: 404 },
-  DB_CONNECTION_FAILED: { message: 'Database connection failed', status: 502 },
-  DB_AUTH_FAILED: { message: 'Database authentication failed', status: 502 },
-  DB_HOST_UNREACHABLE: { message: 'Database host unreachable', status: 502 },
-  DB_NAME_NOT_FOUND: { message: 'Target database not found', status: 502 },
-  DB_DUPLICATE_KEY: { message: 'Duplicate key violates unique constraint', status: 409 },
-  DB_INVALID_CONFIG: { message: 'Invalid database configuration', status: 400 },
-  INTERNAL_ERROR: { message: 'Internal Server Error', status: 500 },
-  PAGE_NOT_FOUND: { message: 'Page not found', status: 404 },
-  PAGE_DOWNLOAD_NOT_ALLOWED: { message: 'Download not allowed for this page', status: 403 },
-  PAGE_NO_DATA_TO_DOWNLOAD: { message: 'No data available to download', status: 404 },
-  PAGE_DATA_SOURCE_INVALID: { message: 'Page data source (table/view) does not exist or is invalid', status: 400 },
-  PAGE_CONFIG_INVALID: { message: 'Page configuration is invalid or corrupted', status: 400 },
-  PAGE_QUERY_ERROR: { message: 'Failed to execute page data query', status: 400 },
-  TENANT_DB_NOT_AVAILABLE: { message: 'Tenant database not available', status: 502 },
-  RATE_LIMIT_EXCEEDED: { message: 'Rate limit exceeded', status: 429 },
-  UNSUPPORTED_DIALECT: { message: 'Unsupported database dialect', status: 400 },
-  DB_SYNTAX_ERROR: { message: 'Database query syntax error', status: 400 },
-  DB_UNKNOWN_COLUMN: { message: 'Referenced column does not exist', status: 400 },
-  DB_UNKNOWN_TABLE: { message: 'Referenced table or view does not exist', status: 400 },
-  DB_QUERY_ERROR: { message: 'Database query failed', status: 400 },
-  USER_BLOCKED: { message: 'User account is blocked', status: 403 },
-  DANGEROUS_SQL_DETECTED: { message: 'Dangerous SQL detected', status: 403 },
+  // Authentication & Authorization
+  VALIDATION_ERROR: { message: 'Please check your input and try again.', status: 400 },
+  CREDS_REQUIRED: { message: 'Username and password are required to sign in.', status: 400 },
+  INVALID_CREDS: { message: 'Invalid username or password. Please check your credentials and try again.', status: 401 },
+  UNAUTHORIZED: { message: 'You are not authorized to access this resource. Please sign in and try again.', status: 401 },
+  INVALIDTOKEN: { message: 'Your session has expired. Please sign in again.', status: 401 },
+  FORBIDDEN: { message: 'You do not have permission to perform this action.', status: 403 },
+  AUTHFAILED: { message: 'Authentication verification failed. Please try signing in again.', status: 500 },
+  
+  // General Resources
+  NOT_FOUND: { message: 'The requested resource was not found.', status: 404 },
+  CONFLICT: { message: 'This action conflicts with existing data. Please check and try again.', status: 409 },
+  
+  // Tenant Related
+  TENANT_NOT_FOUND: { message: 'The specified tenant was not found.', status: 404 },
+  TENANT_DB_NOT_AVAILABLE: { message: 'The database for this tenant is currently unavailable. Please try again later or contact support.', status: 502 },
+  
+  // Database Connection & Configuration
+  DB_CONNECTION_FAILED: { message: 'Unable to connect to the database. This may be a temporary issue. Please try again in a few moments.', status: 502 },
+  DB_AUTH_FAILED: { message: 'Database authentication failed. Please contact support if this problem persists.', status: 502 },
+  DB_HOST_UNREACHABLE: { message: 'Unable to reach the database server. Please try again later or contact support.', status: 502 },
+  DB_NAME_NOT_FOUND: { message: 'The specified database was not found. Please contact support.', status: 502 },
+  DB_INVALID_CONFIG: { message: 'The database configuration is invalid. Please contact support.', status: 400 },
+  
+  // Database Query Errors
+  DB_DUPLICATE_KEY: { message: 'This record already exists. Please use a different value.', status: 409 },
+  DB_SYNTAX_ERROR: { message: 'There is a syntax error in the query. Please check the query configuration.', status: 400 },
+  DB_UNKNOWN_COLUMN: { message: 'A column referenced in the query does not exist. Please check your page configuration.', status: 400 },
+  DB_UNKNOWN_TABLE: { message: 'A table or view referenced in the query does not exist. Please check your page configuration.', status: 400 },
+  DB_QUERY_ERROR: { message: 'An error occurred while retrieving the data. Please try again or contact support if the problem persists.', status: 400 },
+  
+  // Page Related
+  PAGE_NOT_FOUND: { message: 'The requested page was not found.', status: 404 },
+  PAGE_DOWNLOAD_NOT_ALLOWED: { message: 'Download is not allowed for this page.', status: 403 },
+  PAGE_NO_DATA_TO_DOWNLOAD: { message: 'No data is available to download.', status: 404 },
+  PAGE_DATA_SOURCE_INVALID: { message: 'The data source for this page does not exist or is invalid. Please check your page configuration.', status: 400 },
+  PAGE_CONFIG_INVALID: { message: 'The page configuration is invalid or corrupted. Please check your settings.', status: 400 },
+  PAGE_QUERY_ERROR: { message: 'An error occurred while executing the page query. Please verify your query configuration and try again.', status: 400 },
+  
+  // System & Security
+  INTERNAL_ERROR: { message: 'An unexpected error occurred. Please try again or contact support if the problem persists.', status: 500 },
+  RATE_LIMIT_EXCEEDED: { message: 'Too many requests. Please wait a moment and try again.', status: 429 },
+  UNSUPPORTED_DIALECT: { message: 'The database type is not supported. Please contact support.', status: 400 },
+  USER_BLOCKED: { message: 'Your account has been blocked. Please contact your administrator.', status: 403 },
+  DANGEROUS_SQL_DETECTED: { message: 'The query contains potentially dangerous operations and has been blocked for security reasons.', status: 403 },
 };
 
 function createError(code, message, status, details) {
@@ -165,12 +179,21 @@ function createErrorWithContext(error, context = {}) {
   const categorized = categorizeError(error);
   const sanitizedSql = sql ? sanitizeSqlForError(sql, replacements) : null;
 
+  // Generate user-friendly message based on error type
+  const userFriendlyMessage = getUserFriendlyMessage(categorized, { sourceType, dataSource });
+
   // Generate helpful hints based on error type
   const hints = generateErrorHints(categorized, { pageKey, sourceType, dataSource, queryParams });
 
-  // Create enhanced error
+  // Create enhanced error with user-friendly message
   const enhancedError = {
     ...error,
+    // Override the message with user-friendly version
+    message: userFriendlyMessage,
+    // Update details array to use user-friendly message (for non-technical users)
+    // Keep original technical details in queryContext for debugging
+    details: [userFriendlyMessage],
+    // Keep original technical message in queryContext for debugging
     queryContext: {
       category: categorized.category,
       type: categorized.type,
@@ -182,11 +205,59 @@ function createErrorWithContext(error, context = {}) {
       sourceType,
       dataSource,
       queryParams: queryParams ? JSON.stringify(queryParams) : null,
-      hints
+      hints,
+      // Store original technical message for debugging
+      originalMessage: error.message || String(error),
+      // Store original technical details for debugging
+      originalDetails: error.details || []
     }
   };
 
   return enhancedError;
+}
+
+/**
+ * Generate user-friendly error message based on error type
+ * Uses ERROR_CATALOG as the centralized source for error messages
+ */
+function getUserFriendlyMessage(categorized, context = {}) {
+  const { sourceType, dataSource } = context;
+
+  switch (categorized.type) {
+    case 'SQL_SYNTAX_ERROR':
+      return ERROR_CATALOG.DB_SYNTAX_ERROR.message;
+
+    case 'COLUMN_NOT_FOUND':
+      if (categorized.column) {
+        return `The column "${categorized.column}" does not exist. Please check the column name in your page configuration.`;
+      }
+      return ERROR_CATALOG.DB_UNKNOWN_COLUMN.message;
+
+    case 'TABLE_NOT_FOUND':
+      if (sourceType === 'PROCEDURE') {
+        return `The table or view "${dataSource || 'referenced in your query'}" does not exist in the database. Please verify that all tables in your query exist.`;
+      }
+      if (dataSource) {
+        return `The table or view "${dataSource}" does not exist in the database. Please check your page configuration.`;
+      }
+      return ERROR_CATALOG.DB_UNKNOWN_TABLE.message;
+
+    case 'QUERY_TIMEOUT':
+      return 'The query took too long to execute. Please try adding filters to reduce the amount of data, or contact support if the problem persists.';
+
+    case 'PERMISSION_DENIED':
+      return ERROR_CATALOG.FORBIDDEN.message;
+
+    case 'CONNECTION_ERROR':
+      return ERROR_CATALOG.DB_CONNECTION_FAILED.message;
+
+    case 'DATABASE_ERROR':
+    default:
+      if (sourceType === 'PROCEDURE') {
+        return ERROR_CATALOG.PAGE_QUERY_ERROR.message;
+      }
+      return ERROR_CATALOG.DB_QUERY_ERROR.message;
+  }
 }
 
 /**
@@ -338,7 +409,8 @@ module.exports = {
   sanitizeSqlForError,
   categorizeError,
   createErrorWithContext,
-  getColumnSuggestions
+  getColumnSuggestions,
+  getUserFriendlyMessage
 };
 
 
