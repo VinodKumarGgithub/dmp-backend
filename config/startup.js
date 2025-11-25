@@ -2,7 +2,6 @@ const { masterSequelize } = require('./db');
 const { logger } = require('./logger');
 
 const { AdminUser } = require('../models/AdminUser');
-const { Client } = require('../models/Client');
 const { Tenant } = require('../models/Tenant');
 const { PageConfig } = require('../models/PageConfig');
 const { QueryAuditLog } = require('../models/QueryAuditLog');
