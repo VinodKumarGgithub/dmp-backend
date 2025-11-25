@@ -284,6 +284,72 @@ function buildAliasMapFromSql(sql) {
   return map;
 }
 
+/**
+ * Resolve unqualified column names in WHERE clause by finding them in SELECT list
+ * This fixes ambiguous column errors when JOINs are present
+ */
+function resolveColumnNamesInWhereClause(whereClause, baseSql, sequelize) {
+  if (!whereClause || !baseSql) return whereClause;
+  
+  // Extract SELECT list to find qualified column names
+  const normalized = stripTrailingSemicolon(baseSql);
+  const selectMatch = normalized.match(/select\s+([\s\S]+?)\s+from\s/i);
+  if (!selectMatch) return whereClause;
+  
+  const selectClause = selectMatch[1];
+  const parts = splitSelectList(selectClause);
+  
+  // Check if there are qualified column names (table.column) in SELECT list
+  // This indicates multiple tables are involved (either JOINs or comma-separated)
+  let hasQualifiedColumns = false;
+  const columnMap = new Map();
+  
+  parts.forEach((part) => {
+    const trimmed = part.trim();
+    // Extract qualified column (e.g., "pp.requestid" or "pp.requestid AS requestid")
+    const qualifiedMatch = trimmed.match(/([`"'[]?[\w]+[`"'\]]?)\s*\.\s*([`"'[]?[\w]+[`"'\]]?)/);
+    if (qualifiedMatch) {
+      hasQualifiedColumns = true;
+      const tableAlias = stripIdentifierQuotes(qualifiedMatch[1]);
+      const columnName = stripIdentifierQuotes(qualifiedMatch[2]);
+      const unqualifiedName = columnName.toLowerCase();
+      
+      // Store the qualified version (e.g., "pp.requestid")
+      // Use first occurrence if column appears multiple times
+      if (!columnMap.has(unqualifiedName)) {
+        columnMap.set(unqualifiedName, `${tableAlias}.${columnName}`);
+      }
+    }
+  });
+  
+  // If no qualified columns found, no need to resolve (single table query)
+  if (!hasQualifiedColumns || columnMap.size === 0) {
+    return whereClause;
+  }
+  
+  // Replace unqualified column names in WHERE clause with qualified ones
+  let resolvedWhere = whereClause;
+  columnMap.forEach((qualifiedName, unqualifiedName) => {
+    // Get escaped versions
+    const escapedUnqualified = sequelize ? escapeIdentifier(sequelize, unqualifiedName) : unqualifiedName;
+    const escapedQualified = sequelize ? escapeIdentifier(sequelize, qualifiedName) : qualifiedName;
+    
+    // Only replace if the qualified version is different (not already qualified)
+    if (escapedUnqualified === escapedQualified) return;
+    
+    // Find all occurrences of the escaped unqualified identifier
+    const escapedPattern = escapedUnqualified.replace(/[.*+?^${}()|[\]\\`]/g, '\\$&');
+    const pattern = new RegExp(`(^|\\s|[^\\w.:])${escapedPattern}(?=\\s|[^\\w.]|$)`, 'gi');
+    
+    resolvedWhere = resolvedWhere.replace(pattern, (match, before) => {
+      if (before === '.' || before === ':') return match;
+      return `${before}${escapedQualified}`;
+    });
+  });
+  
+  return resolvedWhere;
+}
+
 function inferDataTypeFromValue(value) {
   if (value === null || value === undefined) {
     return 'string';
@@ -749,7 +815,13 @@ const pageService = {
     const { head: baseWithoutOrder, orderClause: existingOrderClause } = stripOrderByClause(baseWithoutPagination);
 
     const queryFragments = this.buildQuery(config, queryParams, sequelize);
-    const filteredSql = appendWhereClauseBody(baseWithoutOrder, queryFragments.whereClause);
+    // Resolve ambiguous column names in WHERE clause by finding qualified versions in SELECT list
+    const resolvedWhereClause = resolveColumnNamesInWhereClause(
+      queryFragments.whereClause,
+      baseWithoutOrder,
+      sequelize
+    );
+    const filteredSql = appendWhereClauseBody(baseWithoutOrder, resolvedWhereClause);
     const effectiveOrderClause =
       queryFragments.orderBy && queryFragments.orderBy.trim()
         ? queryFragments.orderBy.trim()
@@ -1189,6 +1261,28 @@ const pageService = {
             executionSuccess = false;
             errorMessage = queryError.message || String(queryError);
             
+            // Check for procedure not found errors
+            const errorCode = queryError.original?.code || queryError.parent?.code || '';
+            const lowerMessage = errorMessage.toLowerCase();
+            
+            // MySQL: ER_SP_DOES_NOT_EXIST (1305) or messages containing "procedure" and "does not exist"
+            // SQL Server: 2812 or messages containing "could not find stored procedure"
+            const isProcedureNotFound = 
+              errorCode === 'ER_SP_DOES_NOT_EXIST' || 
+              errorCode === 1305 ||
+              errorCode === 2812 ||
+              (lowerMessage.includes('procedure') && (lowerMessage.includes('does not exist') || lowerMessage.includes("doesn't exist"))) ||
+              (lowerMessage.includes('routine') && (lowerMessage.includes('does not exist') || lowerMessage.includes("doesn't exist"))) ||
+              lowerMessage.includes('could not find stored procedure') ||
+              lowerMessage.includes('unknown routine');
+            
+            if (isProcedureNotFound) {
+              executionTime = Date.now() - startTime;
+              throw fromCode('PAGE_DATA_SOURCE_INVALID', [
+                `Stored procedure '${data_source}' does not exist in tenant database`
+              ]);
+            }
+            
             // Enhance error with query context
             executionTime = Date.now() - startTime;
             const enhancedError = createErrorWithContext(queryError, {
@@ -1289,6 +1383,28 @@ const pageService = {
         } catch (queryError) {
           executionSuccess = false;
           errorMessage = queryError.message || String(queryError);
+          
+          // Check for procedure not found errors
+          const errorCode = queryError.original?.code || queryError.parent?.code || '';
+          const lowerMessage = errorMessage.toLowerCase();
+          
+          // MySQL: ER_SP_DOES_NOT_EXIST (1305) or messages containing "procedure" and "does not exist"
+          // SQL Server: 2812 or messages containing "could not find stored procedure"
+          const isProcedureNotFound = 
+            errorCode === 'ER_SP_DOES_NOT_EXIST' || 
+            errorCode === 1305 ||
+            errorCode === 2812 ||
+            (lowerMessage.includes('procedure') && (lowerMessage.includes('does not exist') || lowerMessage.includes("doesn't exist"))) ||
+            (lowerMessage.includes('routine') && (lowerMessage.includes('does not exist') || lowerMessage.includes("doesn't exist"))) ||
+            lowerMessage.includes('could not find stored procedure') ||
+            lowerMessage.includes('unknown routine');
+          
+          if (isProcedureNotFound) {
+            throw fromCode('PAGE_DATA_SOURCE_INVALID', [
+              `Stored procedure '${data_source}' does not exist in tenant database`
+            ]);
+          }
+          
           throw queryError;
         } finally {
           executionTime = Date.now() - startTime;
@@ -1563,6 +1679,28 @@ const pageService = {
           } catch (queryError) {
             executionSuccess = false;
             errorMessage = queryError.message || String(queryError);
+            
+            // Check for procedure not found errors
+            const errorCode = queryError.original?.code || queryError.parent?.code || '';
+            const lowerMessage = errorMessage.toLowerCase();
+            
+            // MySQL: ER_SP_DOES_NOT_EXIST (1305) or messages containing "procedure" and "does not exist"
+            // SQL Server: 2812 or messages containing "could not find stored procedure"
+            const isProcedureNotFound = 
+              errorCode === 'ER_SP_DOES_NOT_EXIST' || 
+              errorCode === 1305 ||
+              errorCode === 2812 ||
+              (lowerMessage.includes('procedure') && (lowerMessage.includes('does not exist') || lowerMessage.includes("doesn't exist"))) ||
+              (lowerMessage.includes('routine') && (lowerMessage.includes('does not exist') || lowerMessage.includes("doesn't exist"))) ||
+              lowerMessage.includes('could not find stored procedure') ||
+              lowerMessage.includes('unknown routine');
+            
+            if (isProcedureNotFound) {
+              throw fromCode('PAGE_DATA_SOURCE_INVALID', [
+                `Stored procedure '${data_source}' does not exist in tenant database`
+              ]);
+            }
+            
             throw queryError;
           } finally {
             const executionTime = Date.now() - startTime;
@@ -1628,10 +1766,37 @@ const pageService = {
         }
 
         // Execute procedure
-        const dataRows = await tenantSequelize.query(procedureCall, {
-          replacements: procedureReplacements,
-          type: tenantSequelize.QueryTypes.SELECT
-        });
+        let dataRows;
+        try {
+          dataRows = await tenantSequelize.query(procedureCall, {
+            replacements: procedureReplacements,
+            type: tenantSequelize.QueryTypes.SELECT
+          });
+        } catch (queryError) {
+          // Check for procedure not found errors
+          const errorCode = queryError.original?.code || queryError.parent?.code || '';
+          const errorMessage = queryError.message || String(queryError);
+          const lowerMessage = errorMessage.toLowerCase();
+          
+          // MySQL: ER_SP_DOES_NOT_EXIST (1305) or messages containing "procedure" and "does not exist"
+          // SQL Server: 2812 or messages containing "could not find stored procedure"
+          const isProcedureNotFound = 
+            errorCode === 'ER_SP_DOES_NOT_EXIST' || 
+            errorCode === 1305 ||
+            errorCode === 2812 ||
+            (lowerMessage.includes('procedure') && (lowerMessage.includes('does not exist') || lowerMessage.includes("doesn't exist"))) ||
+            (lowerMessage.includes('routine') && (lowerMessage.includes('does not exist') || lowerMessage.includes("doesn't exist"))) ||
+            lowerMessage.includes('could not find stored procedure') ||
+            lowerMessage.includes('unknown routine');
+          
+          if (isProcedureNotFound) {
+            throw fromCode('PAGE_DATA_SOURCE_INVALID', [
+              `Stored procedure '${data_source}' does not exist in tenant database`
+            ]);
+          }
+          
+          throw queryError;
+        }
 
         if (!Array.isArray(dataRows)) {
           return { data: [] };
