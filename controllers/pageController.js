@@ -124,12 +124,23 @@ module.exports = {
       // Use getAllPageData to fetch ALL data without pagination for download
       // Include audit context for logging
       const exportFormat = req.query.format || 'csv'; // csv or excel
+      
+      // Extract selected columns from query params (comma-separated string or array)
+      let selectedColumns = null;
+      if (req.query.columns) {
+        if (Array.isArray(req.query.columns)) {
+          selectedColumns = req.query.columns;
+        } else if (typeof req.query.columns === 'string') {
+          selectedColumns = req.query.columns.split(',').map(col => col.trim()).filter(Boolean);
+        }
+      }
+      
       const auditContext = {
         userId: req.user?.userId || req.user?.id || req.user?.username,
         ipAddress: req.ip || req.connection?.remoteAddress,
         exportFormat
       };
-      const { data } = await pageService.getAllPageData(config, req.query, req.db, auditContext);
+      const { data } = await pageService.getAllPageData(config, req.query, req.db, auditContext, selectedColumns);
 
       // Check if there's data to download
       if (!Array.isArray(data) || data.length === 0) {

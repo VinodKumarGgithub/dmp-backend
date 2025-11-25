@@ -1638,7 +1638,7 @@ const pageService = {
   },
 
   // Get all page data without pagination (for downloads)
-  async getAllPageData(config, queryParams, reqDb, auditContext = {}) {
+  async getAllPageData(config, queryParams, reqDb, auditContext = {}, selectedColumns = null) {
     // reqDb should be { sequelize, models, tenantId } from tenantResolver middleware
     if (!reqDb || !reqDb.sequelize) {
       throw fromCode('TENANT_DB_NOT_AVAILABLE');
@@ -1729,7 +1729,11 @@ const pageService = {
             return { data: [] };
           }
 
-          let data = this.selectColumns(dataRows, config.columns);
+          // Convert selectedColumns (array of strings) to array of objects with name property
+          const columnsToUse = selectedColumns && selectedColumns.length > 0
+            ? selectedColumns.map(name => ({ name }))
+            : config.columns;
+          let data = this.selectColumns(dataRows, columnsToUse);
           if (downloadLimit && Array.isArray(data)) {
             data = data.slice(0, downloadLimit);
           }
@@ -1805,7 +1809,11 @@ const pageService = {
         }
 
         // Apply column selection (if columns are specified)
-        let processedData = this.selectColumns(dataRows, config.columns);
+        // Convert selectedColumns (array of strings) to array of objects with name property
+        const columnsToUse = selectedColumns && selectedColumns.length > 0
+          ? selectedColumns.map(name => ({ name }))
+          : config.columns;
+        let processedData = this.selectColumns(dataRows, columnsToUse);
 
         // Apply in-memory filtering, search, and sorting (same as getPageData but without pagination)
         processedData = this.applyInMemoryFilters(processedData, config, queryParams);
@@ -1840,7 +1848,11 @@ const pageService = {
       }
       
       // Apply column selection (if columns are specified)
-      let processedData = this.selectColumns(dataRows, config.columns);
+      // Convert selectedColumns (array of strings) to array of objects with name property
+      const columnsToUse = selectedColumns && selectedColumns.length > 0
+        ? selectedColumns.map(name => ({ name }))
+        : config.columns;
+      let processedData = this.selectColumns(dataRows, columnsToUse);
       
       // Apply in-memory filtering, search, and sorting (same as getPageData but without pagination)
       processedData = this.applyInMemoryFilters(processedData, config, queryParams);
@@ -1863,19 +1875,33 @@ const pageService = {
     const { whereClause, orderBy, replacements, data_source: queryDataSource } = queryResult;
     const { columns } = config;
 
+    // Use selectedColumns if provided, otherwise use config.columns
     // Extract and validate column names (optional - if not specified, use *)
-    const colNames = Array.isArray(columns) && columns.length > 0
-      ? columns
-          .map((c) => c && c.name)
-          .filter(Boolean)
-          .filter((name) => {
-            // Validate column name is safe (alphanumeric, underscore, no SQL injection)
-            if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)) {
-              return false;
-            }
-            return true;
-          })
-      : [];
+    let colNames = [];
+    if (selectedColumns && Array.isArray(selectedColumns) && selectedColumns.length > 0) {
+      // Use provided selected columns
+      colNames = selectedColumns
+        .filter(Boolean)
+        .filter((name) => {
+          // Validate column name is safe (alphanumeric, underscore, no SQL injection)
+          if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)) {
+            return false;
+          }
+          return true;
+        });
+    } else if (Array.isArray(columns) && columns.length > 0) {
+      // Fall back to config columns
+      colNames = columns
+        .map((c) => c && c.name)
+        .filter(Boolean)
+        .filter((name) => {
+          // Validate column name is safe (alphanumeric, underscore, no SQL injection)
+          if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)) {
+            return false;
+          }
+          return true;
+        });
+    }
 
     try {
       const { selectPrefix, limitSuffix } = getSelectLimitClauses(tenantSequelize, downloadLimit);
