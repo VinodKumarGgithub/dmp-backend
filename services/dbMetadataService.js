@@ -28,6 +28,10 @@ const dbMetadataService = {
             FROM INFORMATION_SCHEMA.TABLES
             WHERE TABLE_SCHEMA = DATABASE()
             AND (TABLE_TYPE = 'BASE TABLE' OR TABLE_TYPE = 'VIEW')
+            AND TABLE_SCHEMA NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys')
+            AND TABLE_NAME NOT LIKE 'sys_%'
+            AND TABLE_NAME NOT LIKE 'mysql_%'
+            AND TABLE_NAME NOT LIKE 'innodb_%'
           )
           UNION ALL
           (
@@ -40,6 +44,9 @@ const dbMetadataService = {
             FROM INFORMATION_SCHEMA.ROUTINES
             WHERE ROUTINE_SCHEMA = DATABASE()
             AND ROUTINE_TYPE = 'PROCEDURE'
+            AND ROUTINE_SCHEMA NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys')
+            AND ROUTINE_NAME NOT LIKE 'sys_%'
+            AND ROUTINE_NAME NOT LIKE 'mysql_%'
           )
           ORDER BY name
         `;
@@ -54,6 +61,10 @@ const dbMetadataService = {
                    END AS type
             FROM INFORMATION_SCHEMA.TABLES
             WHERE (TABLE_TYPE = 'BASE TABLE' OR TABLE_TYPE = 'VIEW')
+            AND TABLE_SCHEMA NOT IN ('sys', 'information_schema')
+            AND TABLE_NAME NOT LIKE 'sys%'
+            AND TABLE_NAME NOT LIKE 'dt_%'
+            AND TABLE_NAME NOT LIKE 'MS_%'
           )
           UNION ALL
           (
@@ -65,6 +76,9 @@ const dbMetadataService = {
                    END AS type
             FROM INFORMATION_SCHEMA.ROUTINES
             WHERE ROUTINE_TYPE = 'PROCEDURE'
+            AND ROUTINE_SCHEMA NOT IN ('sys', 'information_schema')
+            AND ROUTINE_NAME NOT LIKE 'sp_%'
+            AND ROUTINE_NAME NOT LIKE 'xp_%'
           )
           ORDER BY name
         `;
@@ -76,8 +90,22 @@ const dbMetadataService = {
         type: sequelize.QueryTypes.SELECT
       });
 
+      // Additional client-side filtering as a safety measure
+      const systemTablePrefixes = dialect === 'mysql' 
+        ? ['sys_', 'mysql_', 'innodb_', 'performance_schema_']
+        : ['sys', 'dt_', 'MS_', 'sp_', 'xp_', 'fn_'];
+      
+      const filteredResults = results.filter(row => {
+        const tableName = row.name?.toLowerCase() || '';
+        // Filter out tables that start with system prefixes
+        if (systemTablePrefixes.some(prefix => tableName.startsWith(prefix.toLowerCase()))) {
+          return false;
+        }
+        return true;
+      });
+
       // Return array of objects with name and type
-      return results.map(row => ({
+      return filteredResults.map(row => ({
         name: row.name,
         type: row.type
       }));
