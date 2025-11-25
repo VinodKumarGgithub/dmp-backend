@@ -656,6 +656,19 @@ const pageService = {
             where.push(`${escapedField} LIKE :${paramKey}`);
             replacements[paramKey] = `%${String(value)}%`;
             break;
+          case 'tags':
+            // Handle comma-separated values for tags (multi-search)
+            const tagValues = String(value).split(',').map(v => v.trim()).filter(v => v);
+            if (tagValues.length > 0) {
+              const tagConditions = [];
+              tagValues.forEach((tagValue, idx) => {
+                const tagParamKey = `${paramKey}_${idx}`;
+                tagConditions.push(`${escapedField} LIKE :${tagParamKey}`);
+                replacements[tagParamKey] = `%${tagValue}%`;
+              });
+              where.push(`(${tagConditions.join(' OR ')})`);
+            }
+            break;
           case 'select':
           case 'number':
             where.push(`${escapedField} = :${paramKey}`);
@@ -930,6 +943,12 @@ const pageService = {
             case 'text':
             case 'string':
               return String(rowValue).toLowerCase().includes(String(filterValue).toLowerCase());
+            case 'tags':
+              // Handle comma-separated values for tags (multi-search)
+              const tagValues = String(filterValue).split(',').map(v => v.trim()).filter(v => v);
+              if (tagValues.length === 0) return true;
+              const rowValueStr = String(rowValue).toLowerCase();
+              return tagValues.some(tag => rowValueStr.includes(tag.toLowerCase()));
             case 'select':
             case 'number':
               return String(rowValue) === String(filterValue);

@@ -40,7 +40,7 @@ const pageConfigService = {
           Joi.object({
             name: Joi.string().required(),
             label: Joi.string().required(),
-            type: Joi.string().valid('text', 'select', 'number', 'date').required(),
+            type: Joi.string().valid('text', 'tags', 'select', 'number', 'date').required(),
             options: Joi.array().items(Joi.string()).optional(),
           })
         )
@@ -141,7 +141,7 @@ const pageConfigService = {
           Joi.object({
             name: Joi.string().required(),
             label: Joi.string().required(),
-            type: Joi.string().valid('text', 'select', 'number', 'date').required(),
+            type: Joi.string().valid('text', 'tags', 'select', 'number', 'date').required(),
             options: Joi.array().items(Joi.string()).optional(),
           })
         )
