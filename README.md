@@ -1,124 +1,99 @@
-# PBM Multi-Tenant Management Interface
+# Clinical Backend API
 
-## Overview
-This HTML interface provides a modern, user-friendly way to manage tenants and transactions in your PBM multi-tenant system.
+A robust, multi-tenant REST API backend built with Node.js and Express.
 
-## Features
+## Technologies Used
 
-### 🏢 **Tenant Management**
-- **Create Tenants**: Add new tenants with database credentials
-- **List Tenants**: View all tenants with search and filtering
-- **Edit Tenants**: Modify tenant information and credentials
-- **Delete Tenants**: Remove tenants from the system
-- **Test Connections**: Verify database connectivity for each tenant
-- **Statistics Dashboard**: Real-time tenant counts and status overview
+### Core Framework
+- **Node.js**: JavaScript runtime environment
+- **Express 5.1.0**: Fast, unopinionated web framework
+- **Sequelize 6.37.7**: Promise-based ORM for database operations
 
-### 💾 **Transaction Management**
-- **View Transactions**: Browse transactions for specific tenants
-- **Create Transactions**: Add new transactions with custom data
-- **Random Transactions**: Generate sample transactions for testing
-- **Tenant Selection**: Choose which tenant's transactions to view
+### Database
+- **MySQL2 3.11.3**: MySQL database driver
+- **Sequelize**: Supports MySQL and MSSQL (SQL Server) databases
 
-## 🚀 **Getting Started**
+### Authentication & Security
+- **jsonwebtoken 9.0.2**: JWT token generation and verification
+- **bcryptjs 3.0.2**: Password hashing and encryption
+- **helmet 8.1.0**: Security headers middleware
+- **cors 2.8.5**: Cross-Origin Resource Sharing configuration
+- **xss-clean 0.1.4**: XSS attack prevention
 
-### 1. **Start the Server**
-```bash
-cd mbx-pbm
-npm start
-```
+### Validation & Utilities
+- **Joi 18.0.1**: Schema validation library
+- **uuid 11.1.0**: Unique identifier generation
+- **dayjs 1.11.14**: Date manipulation library
+- **cls-hooked 4.2.2**: Continuation-local storage for async context
 
-### 2. **Access the Interface**
-Open your browser and navigate to:
-```
-http://localhost:3000
-```
+### Logging & Monitoring
+- **winston 3.17.0**: Logging library
+- **morgan 1.10.1**: HTTP request logger middleware
 
-### 3. **API Endpoints Used**
-The interface connects to these API endpoints:
-- `GET /api/tenants` - List all tenants
-- `POST /api/tenants` - Create new tenant
-- `PUT /api/tenants/:id` - Update tenant
-- `DELETE /api/tenants/:id` - Delete tenant
-- `POST /api/tenants/:id/test-connection` - Test database connection
-- `GET /api/tenants/stats` - Get tenant statistics
-- `POST /api/prior-auth/txn` - Create transaction
-- `POST /api/prior-auth/txn/random` - Create random transaction
+### Performance
+- **compression 1.8.1**: Response compression middleware
+- **on-headers 1.1.0**: Execute callback when response headers are set
 
-## 📱 **Interface Layout**
+### Development Tools
+- **nodemon 3.1.10**: Development server with auto-reload
+- **cross-env 10.0.0**: Cross-platform environment variable setting
+- **dotenv 17.2.3**: Environment variable management
+- **ESLint 9.34.0**: Code linting
+- **Jest 30.1.0**: Testing framework
+- **supertest 7.1.4**: HTTP assertion library for testing
 
-### **Tenant Management Tab**
-- **Statistics Cards**: Total, Active, Inactive, Suspended tenant counts
-- **Search & Filter**: Find tenants by ID, name, or status
-- **Tenant Table**: View all tenants with actions (Edit, Delete, Test Connection)
-- **Add Tenant Button**: Open modal to create new tenant
+## Installation & Setup
 
-### **Transaction Management Tab**
-- **Tenant Selector**: Dropdown to choose which tenant's transactions to view
-- **Transaction Table**: Display all transactions for selected tenant
-- **Add Transaction**: Create custom transactions
-- **Random Transaction**: Generate sample data for testing
+### Prerequisites
+- Node.js (v16 or higher recommended)
+- npm or yarn package manager
+- MySQL or MSSQL database server
 
-## 🔧 **Usage Examples**
+### Installation Steps
 
-### **Creating a New Tenant**
-1. Click "Add Tenant" button
-2. Fill in tenant details:
-   - **Tenant ID**: Unique identifier (e.g., `tenant_001`)
-   - **Name**: Display name (e.g., `Healthcare Provider A`)
-   - **Database Host**: Server IP/hostname
-   - **Port**: Database port (default: 3306)
-   - **User**: Database username
-   - **Password**: Database password
-   - **Database**: Database name
-   - **Status**: Active/Inactive/Suspended
-3. Click "Create Tenant"
+1. **Navigate to the backend directory:**
+   ```bash
+   cd clinical-backend
+   ```
 
-### **Managing Transactions**
-1. Select a tenant from the dropdown
-2. View existing transactions in the table
-3. Create new transactions with custom data
-4. Generate random transactions for testing
+2. **Install dependencies:**
+   ```bash
+   npm install
+   ```
 
-### **Testing Database Connections**
-1. In the tenant table, click the "Test Connection" button (🔌 icon)
-2. The system will attempt to connect to the tenant's database
-3. View success/error messages
+3. **Configure environment variables:**
+   Create a `.env` file in the root directory:
+   ```env
+   # Server Configuration
+   PORT=3000
+   NODE_ENV=development
+   CORS_ORIGIN=http://localhost:5173
 
-## 📊 **Data Display**
+   # Master Database Configuration
+   MASTER_DB_URL=mysql://username:password@localhost:3306/master_db
 
-### **Tenant Information**
-- ID, Name, Database details
-- Status with color-coded badges
-- Creation and update timestamps
-- Action buttons for management
+   # JWT Configuration
+   JWT_SECRET=your-secret-key-here
+   JWT_EXPIRES_IN=24h
 
-### **Transaction Information**
-- Request ID, Version, Type
-- Request and Response bodies
-- Creation timestamps
-- Truncated display with full content on hover
+   # Logging
+   LOG_LEVEL=info
+   ```
 
-## 🚨 **Troubleshooting**
+4. **Start the development server:**
+   ```bash
+   npm run dev
+   ```
 
-### **Common Issues**
-1. **Interface not loading**: Check if server is running on port 3000
-2. **API errors**: Verify all API endpoints are working
-3. **Database connection failures**: Check tenant credentials and network connectivity
-4. **Empty data**: Ensure tenants exist and are properly configured
+5. **Start the production server:**
+   ```bash
+   npm start
+   ```
 
-## 🔄 **Updates and Maintenance**
+## Scripts
 
-The interface automatically:
-- Refreshes tenant statistics
-- Updates tenant lists after changes
-- Reloads transaction data when switching tenants
-- Shows real-time success/error messages
-
-## 📝 **Notes**
-
-- All changes are immediately reflected in the interface
-- Database operations use transactions for data integrity
-- The interface connects to your existing API endpoints
-- No additional configuration required beyond starting the server
-
+- `npm run dev` - Start development server with nodemon (auto-reload)
+- `npm start` - Start production server
+- `npm test` - Run tests with Jest
+- `npm run seed:admin` - Seed initial admin user
 
