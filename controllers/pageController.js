@@ -115,7 +115,7 @@ module.exports = {
       if (!req.db || !req.db.sequelize) {
         return next(fromCode('TENANT_DB_NOT_AVAILABLE'));
       }
-      const config = await pageService.getPageConfigByKey(pageKey);
+      const config = await pageService.getPageConfigByKey(pageKey, req.db?.tenantId, req.user?.role);
       if (!config.is_download_allowed) {
         return next(fromCode('PAGE_DOWNLOAD_NOT_ALLOWED'));
       }
@@ -240,7 +240,7 @@ module.exports = {
       try {
         // Only try to fetch if pageKey is not 'test' or empty
         if (pageKey && pageKey !== 'test' && pageKey.trim() !== '') {
-          config = await pageService.getPageConfigByKey(pageKey);
+          config = await pageService.getPageConfigByKey(pageKey, req.db?.tenantId, req.user?.role);
         } else {
           throw fromCode('PAGE_NOT_FOUND', ['Page config not found']);
         }

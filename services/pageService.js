@@ -551,7 +551,9 @@ function isPageAccessible(pageConfig, tenantId, userRole) {
   if (tenants.length === 0) return true;
   
   // Has values = only these tenants
-  return tenants.includes(tenantId);
+  // Convert both to strings for type-safe comparison (tenant IDs are stored as strings)
+  const tenantIdStr = String(tenantId);
+  return tenants.some(t => String(t) === tenantIdStr);
 }
 
 /**
