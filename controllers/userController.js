@@ -77,7 +77,7 @@ async function createUser(req, res, next) {
 
     // Prevent non-SUPER_ADMIN from creating SUPER_ADMIN
     if (data.role === 'SUPER_ADMIN' && req.user?.role !== 'SUPER_ADMIN') {
-      return next(fromCode('FORBIDDEN', ['Only SUPER_ADMIN can create SUPER_ADMIN users']));
+      return next(fromCode('FORBIDDEN', ['You do not have permission to create users with this role']));
     }
 
     // Check if username already exists
@@ -110,7 +110,7 @@ async function createUser(req, res, next) {
 
     const organizationId = user.organization_id || data.organization_id;
     if (!organizationId && effectiveRole !== 'SUPER_ADMIN') {
-      return next(fromCode('VALIDATION_ERROR', ['Organization ID is required for non-SUPER_ADMIN users']));
+      return next(fromCode('VALIDATION_ERROR', ['Organization ID is required']));
     }
 
     const permissions = organizationId ? await setUserPermissions(user.id, tenantIds, pageKeys, organizationId) : { tenants: [], pages: [] };
@@ -167,12 +167,12 @@ async function updateUser(req, res, next) {
 
     // Prevent non-SUPER_ADMIN from updating users to SUPER_ADMIN
     if (data.role === 'SUPER_ADMIN' && req.user?.role !== 'SUPER_ADMIN') {
-      return next(fromCode('FORBIDDEN', ['Only SUPER_ADMIN can assign SUPER_ADMIN role']));
+      return next(fromCode('FORBIDDEN', ['You do not have permission to assign this role']));
     }
 
     // Prevent non-SUPER_ADMIN from updating existing SUPER_ADMIN users
     if (user.role === 'SUPER_ADMIN' && req.user?.role !== 'SUPER_ADMIN') {
-      return next(fromCode('FORBIDDEN', ['You cannot update SUPER_ADMIN users']));
+      return next(fromCode('FORBIDDEN', ['You do not have permission to update this user']));
     }
 
     // Update password if provided
@@ -220,7 +220,7 @@ async function updateUser(req, res, next) {
 
       const organizationId = user.organization_id;
       if (!organizationId && user.role !== 'SUPER_ADMIN') {
-        return next(fromCode('VALIDATION_ERROR', ['Organization ID is required for non-SUPER_ADMIN users']));
+        return next(fromCode('VALIDATION_ERROR', ['Organization ID is required']));
       }
 
       latestPermissions = organizationId ? await setUserPermissions(user.id, tenantIds, pageKeys, organizationId) : { tenants: [], pages: [] };
@@ -274,7 +274,7 @@ async function deleteUser(req, res, next) {
 
     // Prevent non-SUPER_ADMIN from deleting SUPER_ADMIN users
     if (user.role === 'SUPER_ADMIN' && req.user?.role !== 'SUPER_ADMIN') {
-      return next(fromCode('FORBIDDEN', ['You cannot delete SUPER_ADMIN users']));
+      return next(fromCode('FORBIDDEN', ['You do not have permission to delete this user']));
     }
 
     await deleteUserPermissions(user.id);

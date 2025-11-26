@@ -13,7 +13,7 @@ const { UserPagePreference } = require('../models/UserPagePreference');
 async function testMasterDbConnection() {
   try {
     await masterSequelize.authenticate();
-    await masterSequelize.sync({ alter: true });
+    // await masterSequelize.sync({ alter: true });
     logger.info('✅ Master DB connection established successfully.');
   } catch (err) {
     console.error(err)

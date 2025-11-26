@@ -154,7 +154,7 @@ async function assertUserHasPageAccess(user, tenantId, pageKey, organizationId) 
   if (isSuperAdmin(user) || user.role === 'ADMIN' || user.role === 'MANAGER' || user.role === 'DEVELOPER') {
     // But still check organization access (unless SUPER_ADMIN)
     if (!isSuperAdmin(user) && !canAccessOrganization(user, organizationId)) {
-      throw fromCode('FORBIDDEN', [`You do not have access to organization '${organizationId}'`]);
+      throw fromCode('FORBIDDEN', ['You do not have access to this resource']);
     }
     return;
   }
@@ -162,11 +162,11 @@ async function assertUserHasPageAccess(user, tenantId, pageKey, organizationId) 
   const permissions = await getUserPermissions(user.userId, organizationId);
 
   if (!permissions.tenants.includes(tenantId)) {
-    throw fromCode('FORBIDDEN', [`You do not have access to tenant '${tenantId}'`]);
+    throw fromCode('FORBIDDEN', ['You do not have access to this tenant']);
   }
 
   if (permissions.pages.length > 0 && pageKey && !permissions.pages.includes(pageKey)) {
-    throw fromCode('FORBIDDEN', [`You do not have access to page '${pageKey}'`]);
+    throw fromCode('FORBIDDEN', ['You do not have access to this page']);
   }
 }
 

@@ -18,7 +18,7 @@ const { requireAdmin } = require('../middleware/roleMiddleware');
 router.post('/', authMiddleware, requireAdmin, createTenant);
 router.get('/', authMiddleware,  listTenants);                      // List all tenants with filtering
 router.get('/stats', authMiddleware, requireAdmin, getTenantStats);              // Get tenant statistics
-router.get('/:id', getTenantById);                 // Public via client credentials handled elsewhere
+router.get('/:id', authMiddleware, getTenantById);                 // Public via client credentials handled elsewhere
 router.put('/:id', authMiddleware, requireAdmin, updateTenant);
 router.delete('/:id', authMiddleware, requireAdmin, deleteTenant);
 

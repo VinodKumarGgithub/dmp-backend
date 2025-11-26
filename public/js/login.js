@@ -3,7 +3,6 @@
 const API_BASE = window.location.protocol + '//' + window.location.host;
 //  check if login , if yes go for index.html else login.html
 let token = localStorage.getItem("token");
-console.log(token)
 if(token){
 window.location.href = "index.html"; 
 }

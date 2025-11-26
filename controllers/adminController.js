@@ -36,7 +36,7 @@ module.exports = {
 
       // Prevent blocking SUPER_ADMIN
       if (targetUser.role === 'SUPER_ADMIN') {
-        return next(fromCode('FORBIDDEN', ['Cannot block a SUPER_ADMIN user']));
+        return next(fromCode('FORBIDDEN', ['This user cannot be blocked']));
       }
 
       // Prevent non-SUPER_ADMIN from blocking users from other organizations
