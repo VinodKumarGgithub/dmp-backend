@@ -11,8 +11,9 @@ const userBlockingService = {
         throw fromCode('NOT_FOUND', [`User with id ${userId} not found`]);
       }
 
-      if (user.role === 'ADMIN') {
-        throw fromCode('FORBIDDEN', ['Cannot block an ADMIN user']);
+      // Prevent blocking ADMIN or SUPER_ADMIN
+      if (user.role === 'ADMIN' || user.role === 'SUPER_ADMIN') {
+        throw fromCode('FORBIDDEN', [`Cannot block an ${user.role} user`]);
       }
 
       user.is_blocked = true;
@@ -60,11 +61,19 @@ const userBlockingService = {
   },
 
   // Get blocked users
-  async getBlockedUsers() {
+  async getBlockedUsers(organizationId = null) {
     try {
+      const whereClause = { is_blocked: true };
+      
+      // Filter by organization if provided (null means SUPER_ADMIN sees all)
+      if (organizationId !== null) {
+        whereClause.organization_id = organizationId;
+      }
+      // If organizationId is null, SUPER_ADMIN sees all blocked users
+      
       const blockedUsers = await AdminUser.findAll({
-        where: { is_blocked: true },
-        attributes: ['id', 'username', 'role', 'blocked_reason', 'blocked_at', 'createdon'],
+        where: whereClause,
+        attributes: ['id', 'username', 'role', 'organization_id', 'blocked_reason', 'blocked_at', 'createdon'],
         order: [['blocked_at', 'DESC']]
       });
 
@@ -72,6 +81,7 @@ const userBlockingService = {
         id: user.id,
         username: user.username,
         role: user.role,
+        organization_id: user.organization_id,
         blocked_reason: user.blocked_reason,
         blocked_at: user.blocked_at,
         createdon: user.createdon
@@ -90,9 +100,10 @@ const userBlockingService = {
         return null; // User not found, can't block
       }
 
-      if (user.role === 'ADMIN') {
-        // Log but don't block admin users automatically
-        console.warn(`Attempted to auto-block ADMIN user: ${username}. Reason: ${reason}`);
+      // Prevent blocking ADMIN or SUPER_ADMIN automatically
+      if (user.role === 'ADMIN' || user.role === 'SUPER_ADMIN') {
+        // Log but don't block admin/super_admin users automatically
+        console.warn(`Attempted to auto-block ${user.role} user: ${username}. Reason: ${reason}`);
         return null;
       }
 

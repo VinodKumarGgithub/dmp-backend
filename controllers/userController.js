@@ -36,7 +36,10 @@ async function listUsers(req, res, next) {
     });
     
     const userIds = users.map((user) => user.id);
-    const permissionsMap = await getPermissionsForUsers(userIds);
+    // For non-SUPER_ADMIN, filter permissions by organization
+    // For SUPER_ADMIN, show all permissions (or could filter by specific org if needed)
+    const organizationId = req.user?.role === 'SUPER_ADMIN' ? null : req.user?.organization_id;
+    const permissionsMap = await getPermissionsForUsers(userIds, organizationId);
     const enrichedUsers = users.map((user) => {
       const perms = permissionsMap.get(user.id) || { tenants: [], pages: [] };
       return {
