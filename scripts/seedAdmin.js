@@ -19,7 +19,17 @@ const { AdminUser } = require('../models/AdminUser');
       defaults: {
         username,
         password_hash: passwordHash,
-        role: 'ADMIN'
+        role: 'SUPER_ADMIN',
+        organization_id: null,
+        name: 'Super Admin',
+        email: 'superadmin@example.com',
+        phone_number: '1234567890',
+        profile_picture: null,
+        is_blocked: false,
+        blocked_reason: null,
+        blocked_at: null,
+        createdon: new Date(),
+        updatedon: new Date(),
       }
     });
 

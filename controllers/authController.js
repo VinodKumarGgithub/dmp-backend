@@ -32,6 +32,7 @@ async function login(req, res, next) {
         username: user.username, 
         role: user.role, 
         userId: user.id,
+        organization_id: user.organization_id,
         name: user.name,
         email: user.email,
         phone_number: user.phone_number,

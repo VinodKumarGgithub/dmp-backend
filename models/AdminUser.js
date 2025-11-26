@@ -8,6 +8,11 @@ const AdminUser = masterSequelize.define('master_user', {
     autoIncrement: true,
     primaryKey: true
   },
+  organization_id: {
+    type: DataTypes.STRING,
+    allowNull: true,
+    comment: 'Organization/Client ID. NULL = SUPER_ADMIN (owner, manages all organizations)'
+  },
   username: {
     type: DataTypes.STRING,
     allowNull: false,
@@ -18,7 +23,7 @@ const AdminUser = masterSequelize.define('master_user', {
     allowNull: false
   },
   role: {
-    type: DataTypes.ENUM('ADMIN', 'MANAGER', 'USER', 'DEVELOPER'),
+    type: DataTypes.ENUM('SUPER_ADMIN', 'ADMIN', 'MANAGER', 'USER', 'DEVELOPER'),
     allowNull: false,
     defaultValue: 'USER'
   },
@@ -69,7 +74,10 @@ const AdminUser = masterSequelize.define('master_user', {
   }
 }, {
   tableName: 'master_users',
-  timestamps: false
+  timestamps: false,
+  indexes: [
+    { fields: ['organization_id'] },
+  ]
 });
 
 // DO NOT use sync({ alter: true }) in production - it can cause issues with existing tables

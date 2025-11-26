@@ -10,10 +10,11 @@ module.exports = {
         return next(fromCode('VALIDATION_ERROR', ['pageKey is required']));
       }
       const userId = req.user?.userId || req.user?.id;
-      if (!userId) {
+      const organizationId = req.db?.organizationId;
+      if (!userId || !organizationId) {
         return next(fromCode('FORBIDDEN'));
       }
-      const prefs = await getUserPagePreference(userId, pageKey);
+      const prefs = await getUserPagePreference(userId, pageKey, organizationId);
       res.json(success(prefs || { tableColumns: [], downloadColumns: [] }, 'Preferences fetched successfully'));
     } catch (err) {
       next(err);
@@ -27,10 +28,11 @@ module.exports = {
         return next(fromCode('VALIDATION_ERROR', ['pageKey is required']));
       }
       const userId = req.user?.userId || req.user?.id;
-      if (!userId) {
+      const organizationId = req.db?.organizationId;
+      if (!userId || !organizationId) {
         return next(fromCode('FORBIDDEN'));
       }
-      const prefs = await saveUserPagePreference(userId, pageKey, req.body || {});
+      const prefs = await saveUserPagePreference(userId, pageKey, req.body || {}, organizationId);
       res.json(success(prefs, 'Preferences saved successfully'));
     } catch (err) {
       next(err);

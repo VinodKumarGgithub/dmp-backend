@@ -7,6 +7,11 @@ const UserPagePermission = masterSequelize.define('user_page_permission', {
     autoIncrement: true,
     primaryKey: true,
   },
+  organization_id: {
+    type: DataTypes.STRING,
+    allowNull: false,
+    comment: 'Organization/Client ID for this permission'
+  },
   user_id: {
     type: DataTypes.INTEGER,
     allowNull: false,
@@ -20,8 +25,9 @@ const UserPagePermission = masterSequelize.define('user_page_permission', {
   timestamps: false,
   indexes: [
     { fields: ['user_id'] },
+    { fields: ['organization_id'] },
     { fields: ['page_key'] },
-    { fields: ['user_id', 'page_key'], unique: true },
+    { fields: ['user_id', 'organization_id', 'page_key'], unique: true },
   ],
 });
 

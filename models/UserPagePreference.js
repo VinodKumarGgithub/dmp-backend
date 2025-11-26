@@ -7,6 +7,11 @@ const UserPagePreference = masterSequelize.define('user_page_preference', {
     autoIncrement: true,
     primaryKey: true,
   },
+  organization_id: {
+    type: DataTypes.STRING,
+    allowNull: false,
+    comment: 'Organization/Client ID for this preference'
+  },
   user_id: {
     type: DataTypes.INTEGER,
     allowNull: false,
@@ -37,7 +42,8 @@ const UserPagePreference = masterSequelize.define('user_page_preference', {
   tableName: 'user_page_preferences',
   timestamps: false,
   indexes: [
-    { fields: ['user_id', 'page_key'], unique: true },
+    { fields: ['user_id', 'organization_id', 'page_key'], unique: true },
+    { fields: ['organization_id'] },
   ],
 });
 

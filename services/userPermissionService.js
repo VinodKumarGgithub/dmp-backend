@@ -3,6 +3,7 @@ const { masterSequelize } = require('../config/db');
 const { fromCode } = require('../utils/errors');
 const { UserTenantPermission } = require('../models/UserTenantPermission');
 const { UserPagePermission } = require('../models/UserPagePermission');
+const { isSuperAdmin, canAccessOrganization } = require('../middleware/roleMiddleware');
 
 function normalizeStrings(values = []) {
   if (!Array.isArray(values)) return [];
@@ -15,17 +16,23 @@ function normalizeStrings(values = []) {
   );
 }
 
-async function getUserPermissions(userId) {
+async function getUserPermissions(userId, organizationId) {
   if (!userId) {
     return { tenants: [], pages: [] };
   }
+  
+  const whereClause = { user_id: userId };
+  if (organizationId) {
+    whereClause.organization_id = organizationId;
+  }
+  
   const [tenantRows, pageRows] = await Promise.all([
     UserTenantPermission.findAll({
-      where: { user_id: userId },
+      where: whereClause,
       attributes: ['tenant_id'],
     }),
     UserPagePermission.findAll({
-      where: { user_id: userId },
+      where: whereClause,
       attributes: ['page_key'],
     }),
   ]);
@@ -36,18 +43,24 @@ async function getUserPermissions(userId) {
   };
 }
 
-async function getPermissionsForUsers(userIds = []) {
+async function getPermissionsForUsers(userIds = [], organizationId = null) {
   if (!Array.isArray(userIds) || userIds.length === 0) {
     return new Map();
   }
   const uniqueIds = Array.from(new Set(userIds));
+  
+  const whereClause = { user_id: { [Op.in]: uniqueIds } };
+  if (organizationId) {
+    whereClause.organization_id = organizationId;
+  }
+  
   const [tenantRows, pageRows] = await Promise.all([
     UserTenantPermission.findAll({
-      where: { user_id: { [Op.in]: uniqueIds } },
+      where: whereClause,
       attributes: ['user_id', 'tenant_id'],
     }),
     UserPagePermission.findAll({
-      where: { user_id: { [Op.in]: uniqueIds } },
+      where: whereClause,
       attributes: ['user_id', 'page_key'],
     }),
   ]);
@@ -74,25 +87,42 @@ async function getPermissionsForUsers(userIds = []) {
   return map;
 }
 
-async function setUserPermissions(userId, tenantIds = [], pageKeys = []) {
-  if (!userId) return;
+async function setUserPermissions(userId, tenantIds = [], pageKeys = [], organizationId) {
+  if (!userId || !organizationId) {
+    throw fromCode('VALIDATION_ERROR', ['User ID and Organization ID are required']);
+  }
+  
   const normalizedTenants = normalizeStrings(tenantIds);
   const normalizedPages = normalizeStrings(pageKeys);
 
   await masterSequelize.transaction(async (transaction) => {
-    await UserTenantPermission.destroy({ where: { user_id: userId }, transaction });
-    await UserPagePermission.destroy({ where: { user_id: userId }, transaction });
+    await UserTenantPermission.destroy({ 
+      where: { user_id: userId, organization_id: organizationId }, 
+      transaction 
+    });
+    await UserPagePermission.destroy({ 
+      where: { user_id: userId, organization_id: organizationId }, 
+      transaction 
+    });
 
     if (normalizedTenants.length > 0) {
       await UserTenantPermission.bulkCreate(
-        normalizedTenants.map((tenantId) => ({ user_id: userId, tenant_id: tenantId })),
+        normalizedTenants.map((tenantId) => ({ 
+          user_id: userId, 
+          organization_id: organizationId,
+          tenant_id: tenantId 
+        })),
         { transaction }
       );
     }
 
     if (normalizedPages.length > 0) {
       await UserPagePermission.bulkCreate(
-        normalizedPages.map((pageKey) => ({ user_id: userId, page_key: pageKey })),
+        normalizedPages.map((pageKey) => ({ 
+          user_id: userId, 
+          organization_id: organizationId,
+          page_key: pageKey 
+        })),
         { transaction }
       );
     }
@@ -109,19 +139,27 @@ async function deleteUserPermissions(userId) {
   ]);
 }
 
-async function assertUserHasPageAccess(user, tenantId, pageKey) {
+async function assertUserHasPageAccess(user, tenantId, pageKey, organizationId) {
   if (!tenantId) {
     throw fromCode('FORBIDDEN', ['Tenant is required for this request']);
   }
   if (!user || !user.userId) {
     throw fromCode('FORBIDDEN', ['User context missing']);
   }
+  if (!organizationId) {
+    throw fromCode('FORBIDDEN', ['Organization ID is required']);
+  }
 
-  if (user.role === 'ADMIN' || user.role === 'MANAGER' || user.role === 'DEVELOPER') {
+  // SUPER_ADMIN and ADMIN/MANAGER/DEVELOPER bypass permission checks
+  if (isSuperAdmin(user) || user.role === 'ADMIN' || user.role === 'MANAGER' || user.role === 'DEVELOPER') {
+    // But still check organization access (unless SUPER_ADMIN)
+    if (!isSuperAdmin(user) && !canAccessOrganization(user, organizationId)) {
+      throw fromCode('FORBIDDEN', [`You do not have access to organization '${organizationId}'`]);
+    }
     return;
   }
 
-  const permissions = await getUserPermissions(user.userId);
+  const permissions = await getUserPermissions(user.userId, organizationId);
 
   if (!permissions.tenants.includes(tenantId)) {
     throw fromCode('FORBIDDEN', [`You do not have access to tenant '${tenantId}'`]);
@@ -132,12 +170,14 @@ async function assertUserHasPageAccess(user, tenantId, pageKey) {
   }
 }
 
-async function getAllowedPageKeys(user) {
+async function getAllowedPageKeys(user, organizationId) {
   if (!user || !user.userId) return null;
-  if (user.role === 'ADMIN' || user.role === 'MANAGER' || user.role === 'DEVELOPER') {
-    return null;
+  if (isSuperAdmin(user) || user.role === 'ADMIN' || user.role === 'MANAGER' || user.role === 'DEVELOPER') {
+    return null;  // No restrictions for SUPER_ADMIN and elevated roles
   }
-  const permissions = await getUserPermissions(user.userId);
+  if (!organizationId) return null;
+  
+  const permissions = await getUserPermissions(user.userId, organizationId);
   if (permissions.pages && permissions.pages.length > 0) {
     return permissions.pages;
   }

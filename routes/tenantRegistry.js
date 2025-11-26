@@ -24,7 +24,7 @@ router.delete('/:id', authMiddleware, requireAdmin, deleteTenant);
 
 // Special Operations
 router.post('/bulk', authMiddleware, requireAdmin, bulkCreateTenants);           // Bulk create tenants
-router.post('/:id/test-connection', testTenantConnection); // Test database connection
+router.post('/:id/test-connection', authMiddleware, requireAdmin, testTenantConnection); // Test database connection
 
 module.exports = router;
 

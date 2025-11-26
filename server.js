@@ -13,7 +13,7 @@ const { health } = require('./controllers/healthController');
 
 const app = express();
 // app.use(xss());
-app.use(helmet());
+// app.use(helmet());
 app.use(cors(
   {
     origin: process.env.CORS_ORIGIN || '*',

@@ -7,6 +7,11 @@ const Tenant = masterSequelize.define('tenant', {
     primaryKey: true,
     allowNull: false
   },
+  organization_id: {
+    type: DataTypes.STRING,
+    allowNull: false,
+    comment: 'Organization/Client ID that this tenant belongs to'
+  },
   name: { 
     type: DataTypes.STRING, 
     allowNull: false 
@@ -58,7 +63,10 @@ const Tenant = masterSequelize.define('tenant', {
   }
 }, { 
   timestamps: false,
-  tableName: 'tenants'
+  tableName: 'tenants',
+  indexes: [
+    { fields: ['organization_id'] },
+  ]
 });
 
 module.exports = Tenant;

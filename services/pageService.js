@@ -435,6 +435,7 @@ async function logQueryExecution(auditData) {
 
     const logEntry = {
       id: generateId('audit'),
+      organization_id: auditData.organizationId || null,
       page_key: auditData.pageKey,
       tenant_id: auditData.tenantId,
       user_id: auditData.userId,
@@ -535,12 +536,31 @@ function getPageTenants(pageConfig) {
  * Check if a page is accessible to a tenant
  * @param {Object} pageConfig - Page configuration object
  * @param {string} tenantId - Tenant ID to check
- * @param {string} userRole - User role (ADMIN sees all)
+ * @param {string} userRole - User role (SUPER_ADMIN/ADMIN sees all)
+ * @param {string} organizationId - Organization ID to check
+ * @param {string} userOrganizationId - User's organization ID
  * @returns {boolean}
  */
-function isPageAccessible(pageConfig, tenantId, userRole) {
-  // Admin users see all pages
-  if (userRole === 'ADMIN') return true;
+function isPageAccessible(pageConfig, tenantId, userRole, organizationId, userOrganizationId) {
+  // SUPER_ADMIN sees all pages across all organizations
+  if (userRole === 'SUPER_ADMIN') return true;
+  
+  // ADMIN sees all pages in their organization
+  if (userRole === 'ADMIN') {
+    // Check organization match (if page has organization_id)
+    if (pageConfig.organization_id && organizationId) {
+      return pageConfig.organization_id === organizationId;
+    }
+    // If page has no organization_id, it's global and accessible
+    return true;
+  }
+  
+  // Check organization access first
+  if (pageConfig.organization_id) {
+    if (organizationId && String(pageConfig.organization_id) !== String(organizationId)) {
+      return false;  // Page belongs to different organization
+    }
+  }
   
   // If no tenant context, allow (for admin operations)
   if (!tenantId) return true;
@@ -561,30 +581,32 @@ function isPageAccessible(pageConfig, tenantId, userRole) {
  * @param {Array} pages - Array of page configs
  * @param {string} tenantId - Tenant ID to filter by
  * @param {string} userRole - User role
+ * @param {string} organizationId - Organization ID to filter by
+ * @param {string} userOrganizationId - User's organization ID
  * @returns {Array} Filtered pages
  */
-function filterPagesByTenant(pages, tenantId, userRole) {
-  if (userRole === 'ADMIN') return pages;
-  if (!tenantId) return pages;
+function filterPagesByTenant(pages, tenantId, userRole, organizationId, userOrganizationId) {
+  if (userRole === 'SUPER_ADMIN' || userRole === 'ADMIN') return pages;
+  if (!tenantId && !organizationId) return pages;
   
-  return pages.filter(page => isPageAccessible(page, tenantId, userRole));
+  return pages.filter(page => isPageAccessible(page, tenantId, userRole, organizationId, userOrganizationId));
 }
 
 const pageService = {
-  async listPages(pageKeyFilter = null, tenantId = null, userRole = null) {
+  async listPages(pageKeyFilter = null, tenantId = null, userRole = null, organizationId = null, userOrganizationId = null) {
     try {
       const where = {};
       if (Array.isArray(pageKeyFilter) && pageKeyFilter.length > 0) {
         where.page_key = pageKeyFilter;
       }
       const pages = await PageConfig.findAll({
-        attributes: ['page_key', 'title', 'is_download_allowed', 'download_row_limit', 'tenant_access_json'],
+        attributes: ['page_key', 'title', 'is_download_allowed', 'download_row_limit', 'tenant_access_json', 'organization_id'],
         where,
       });
       
       // Filter by tenant access (in-memory, fast)
-      if (tenantId || userRole) {
-        return filterPagesByTenant(pages, tenantId, userRole);
+      if (tenantId || organizationId || userRole) {
+        return filterPagesByTenant(pages, tenantId, userRole, organizationId, userOrganizationId);
       }
       
       return pages;
@@ -594,7 +616,7 @@ const pageService = {
     }
   },
 
-  async getPageConfigByKey(pageKey, tenantId = null, userRole = null) {
+  async getPageConfigByKey(pageKey, tenantId = null, userRole = null, organizationId = null, userOrganizationId = null) {
     if (!pageKey || typeof pageKey !== 'string') {
       throw fromCode('VALIDATION_ERROR', ['Page key is required and must be a string']);
     }
@@ -606,8 +628,8 @@ const pageService = {
       }
 
       // Check tenant access
-      if (!isPageAccessible(page, tenantId, userRole)) {
-        throw fromCode('FORBIDDEN', [`Page '${pageKey}' is not accessible for this tenant`]);
+      if (!isPageAccessible(page, tenantId, userRole, organizationId, userOrganizationId)) {
+        throw fromCode('FORBIDDEN', [`Page '${pageKey}' is not accessible for this organization/tenant`]);
       }
 
       try {
@@ -1303,6 +1325,7 @@ const pageService = {
             executionTime = executionTime ?? (Date.now() - startTime);
             performance.queryExecutionTimeMs = executionTime;
             logQueryExecution({
+              organizationId: reqDb.organizationId,
               pageKey: config.page_key,
               tenantId: reqDb.tenantId,
               userId: auditContext.userId,
@@ -1412,6 +1435,7 @@ const pageService = {
           executionTime = Date.now() - startTime;
           performance.queryExecutionTimeMs = executionTime;
           logQueryExecution({
+            organizationId: reqDb.organizationId,
             pageKey: config.page_key,
             tenantId: reqDb.tenantId,
             userId: auditContext.userId,
@@ -1500,6 +1524,7 @@ const pageService = {
           const executionTime = Date.now() - startTime;
           performance.queryExecutionTimeMs = executionTime;
           logQueryExecution({
+            organizationId: reqDb.organizationId,
             pageKey: config.page_key,
             tenantId: reqDb.tenantId,
             userId: auditContext.userId,
@@ -1564,6 +1589,7 @@ const pageService = {
           const executionTime = Date.now() - startTime;
           performance.queryExecutionTimeMs = executionTime;
           logQueryExecution({
+            organizationId: reqDb.organizationId,
             pageKey: config.page_key,
             tenantId: reqDb.tenantId,
             userId: auditContext.userId,
@@ -1707,6 +1733,7 @@ const pageService = {
           } finally {
             const executionTime = Date.now() - startTime;
             logQueryExecution({
+              organizationId: reqDb.organizationId,
               pageKey: config.page_key,
               tenantId: reqDb.tenantId,
               userId: auditContext.userId,

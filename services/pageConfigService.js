@@ -10,6 +10,7 @@ const pageConfigService = {
   async createPageConfig(masterDb, payload, user = null) {
     const schema = Joi.object({
       page_key: Joi.string().required().min(1).max(100).pattern(/^[a-zA-Z0-9_-]+$/),
+      organization_id: Joi.string().allow(null, '').optional(),
       title: Joi.string().required().min(1).max(200),
       data_source: Joi.string().required().min(1).max(100).pattern(/^[a-zA-Z_][a-zA-Z0-9_]*$/),
       source_type: Joi.string().valid('TABLE', 'VIEW', 'PROCEDURE').default('TABLE'),
@@ -86,6 +87,7 @@ const pageConfigService = {
       const pageConfig = await PageConfig.create(
         {
           id,
+          organization_id: data.organization_id || null,
           page_key: data.page_key,
           title: data.title,
           data_source: data.data_source,
@@ -114,6 +116,7 @@ const pageConfigService = {
   async updatePageConfig(masterDb, pageKey, payload, user = null) {
     const schema = Joi.object({
       title: Joi.string().min(1).max(200),
+      organization_id: Joi.string().allow(null, '').optional(),
       data_source: Joi.string().min(1).max(100).pattern(/^[a-zA-Z_][a-zA-Z0-9_]*$/),
       source_type: Joi.string().valid('TABLE', 'VIEW', 'PROCEDURE'),
       source_params: Joi.array()
@@ -184,6 +187,7 @@ const pageConfigService = {
 
       const updateData = {};
       if (data.title !== undefined) updateData.title = data.title;
+      if (data.organization_id !== undefined) updateData.organization_id = data.organization_id || null;
       if (data.data_source !== undefined) updateData.data_source = data.data_source;
       if (data.source_type !== undefined) updateData.source_type = data.source_type;
       if (data.source_params !== undefined) updateData.source_params_json = data.source_params ? JSON.stringify(data.source_params) : null;
