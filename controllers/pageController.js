@@ -5,6 +5,7 @@ const { dbMetadataService } = require('../services/dbMetadataService');
 const { masterSequelize } = require('../config/db');
 const { fromCode } = require('../utils/errors');
 const { assertUserHasPageAccess, getAllowedPageKeys } = require('../services/userPermissionService');
+const { PageConfig } = require('../models/PageConfig');
 
 module.exports = {
   // GET /api/pages
@@ -23,6 +24,16 @@ module.exports = {
   // POST /api/pages (create page config)
   async createPageConfig(req, res, next) {
     try {
+      // Prevent non-SUPER_ADMIN from creating pages for other organizations
+      if (req.user?.role !== 'SUPER_ADMIN') {
+        if (!req.user?.organization_id) {
+          return next(fromCode('FORBIDDEN', ['Organization ID is required']));
+        }
+        // Auto-set organization_id for non-SUPER_ADMIN users
+        req.body.organization_id = req.user.organization_id;
+      }
+      // SUPER_ADMIN can leave organization_id as null (global pages) or specify it
+      
       const pageConfig = await pageConfigService.createPageConfig(masterSequelize, req.body, req.user);
       res.status(201).json(success(pageConfig, 'Page config created successfully'));
     } catch (err) {
@@ -34,6 +45,27 @@ module.exports = {
   async updatePageConfig(req, res, next) {
     try {
       const { pageKey } = req.params;
+      
+      // First get the page to check organization
+      const existingPage = await PageConfig.findOne({
+        where: { page_key: pageKey },
+        attributes: ['organization_id']
+      });
+
+      if (!existingPage) {
+        return next(fromCode('PAGE_NOT_FOUND', [`Page config not found for key: ${pageKey}`]));
+      }
+
+      // Prevent non-SUPER_ADMIN from updating pages from other organizations
+      if (req.user?.role !== 'SUPER_ADMIN') {
+        if (!req.user?.organization_id || existingPage.organization_id !== req.user.organization_id) {
+          return next(fromCode('FORBIDDEN', ['You can only update pages from your own organization']));
+        }
+        // Prevent non-SUPER_ADMIN from changing organization_id
+        delete req.body.organization_id;
+      }
+      // SUPER_ADMIN can update any page and change organization_id
+      
       const pageConfig = await pageConfigService.updatePageConfig(masterSequelize, pageKey, req.body, req.user);
       res.json(success(pageConfig, 'Page config updated successfully'));
     } catch (err) {
@@ -45,6 +77,25 @@ module.exports = {
   async deletePageConfig(req, res, next) {
     try {
       const { pageKey } = req.params;
+      
+      // First get the page to check organization
+      const page = await PageConfig.findOne({
+        where: { page_key: pageKey },
+        attributes: ['organization_id']
+      });
+
+      if (!page) {
+        return next(fromCode('PAGE_NOT_FOUND', [`Page config not found for key: ${pageKey}`]));
+      }
+
+      // Prevent non-SUPER_ADMIN from deleting pages from other organizations
+      if (req.user?.role !== 'SUPER_ADMIN') {
+        if (!req.user?.organization_id || page.organization_id !== req.user.organization_id) {
+          return next(fromCode('FORBIDDEN', ['You can only delete pages from your own organization']));
+        }
+      }
+      // SUPER_ADMIN can delete any page
+      
       const result = await pageConfigService.deletePageConfig(masterSequelize, pageKey);
       res.json(success(result, 'Page config deleted successfully'));
     } catch (err) {
@@ -119,11 +170,12 @@ module.exports = {
       if (!req.db || !req.db.sequelize) {
         return next(fromCode('TENANT_DB_NOT_AVAILABLE'));
       }
-      const config = await pageService.getPageConfigByKey(pageKey, req.db?.tenantId, req.user?.role);
+      const organizationId = req.db?.organizationId;
+      const config = await pageService.getPageConfigByKey(pageKey, req.db?.tenantId, req.user?.role, organizationId, req.user?.organization_id);
       if (!config.is_download_allowed) {
         return next(fromCode('PAGE_DOWNLOAD_NOT_ALLOWED'));
       }
-      await assertUserHasPageAccess(req.user, req.db?.tenantId, config.page_key);
+      await assertUserHasPageAccess(req.user, req.db?.tenantId, config.page_key, organizationId);
 
       // Use getAllPageData to fetch ALL data without pagination for download
       // Include audit context for logging

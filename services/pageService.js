@@ -3,6 +3,7 @@ const { mapDbError } = require('../utils/dbErrorMapper');
 const { PageConfig } = require('../models/PageConfig');
 const { dbMetadataService } = require('./dbMetadataService');
 const { validateProcedureSql } = require('../utils/sqlSecurity');
+const { Op } = require('sequelize');
 const crypto = require('crypto');
 const LOG_ENCRYPTION_KEY = process.env.LOG_ENCRYPTION_KEY || '';
 const getEncryptionKey = () => {
@@ -545,21 +546,29 @@ function isPageAccessible(pageConfig, tenantId, userRole, organizationId, userOr
   // SUPER_ADMIN sees all pages across all organizations
   if (userRole === 'SUPER_ADMIN') return true;
   
-  // ADMIN sees all pages in their organization
+  // ADMIN sees all pages in their organization or global pages (null organization_id)
   if (userRole === 'ADMIN') {
-    // Check organization match (if page has organization_id)
-    if (pageConfig.organization_id && organizationId) {
-      return pageConfig.organization_id === organizationId;
-    }
     // If page has no organization_id, it's global and accessible
-    return true;
+    if (!pageConfig.organization_id) return true;
+    
+    // Check if page belongs to user's organization
+    // Use userOrganizationId (user's org) or organizationId (request context) - both should match
+    const effectiveOrgId = userOrganizationId || organizationId;
+    if (effectiveOrgId) {
+      return String(pageConfig.organization_id) === String(effectiveOrgId);
+    }
+    // If user has no organization_id, they can't access organization-specific pages
+    return false;
   }
   
-  // Check organization access first
+  // For regular users, check organization access first
   if (pageConfig.organization_id) {
-    if (organizationId && String(pageConfig.organization_id) !== String(organizationId)) {
+    const effectiveOrgId = userOrganizationId || organizationId;
+    if (effectiveOrgId && String(pageConfig.organization_id) !== String(effectiveOrgId)) {
       return false;  // Page belongs to different organization
     }
+    // If no organization context, deny access to organization-specific pages
+    if (!effectiveOrgId) return false;
   }
   
   // If no tenant context, allow (for admin operations)
@@ -586,8 +595,12 @@ function isPageAccessible(pageConfig, tenantId, userRole, organizationId, userOr
  * @returns {Array} Filtered pages
  */
 function filterPagesByTenant(pages, tenantId, userRole, organizationId, userOrganizationId) {
-  if (userRole === 'SUPER_ADMIN' || userRole === 'ADMIN') return pages;
-  if (!tenantId && !organizationId) return pages;
+  // SUPER_ADMIN sees all pages (organization filtering done at DB level)
+  if (userRole === 'SUPER_ADMIN') return pages;
+  
+  // For ADMIN and others, filter by tenant access
+  // Organization filtering is now done at DB level, but we still need tenant-level filtering
+  if (!tenantId && !organizationId && !userOrganizationId) return pages;
   
   return pages.filter(page => isPageAccessible(page, tenantId, userRole, organizationId, userOrganizationId));
 }
@@ -599,12 +612,30 @@ const pageService = {
       if (Array.isArray(pageKeyFilter) && pageKeyFilter.length > 0) {
         where.page_key = pageKeyFilter;
       }
+      
+      // Filter by organization: SUPER_ADMIN sees all, others see only their org or global pages
+      if (userRole !== 'SUPER_ADMIN') {
+        const effectiveOrgId = userOrganizationId || organizationId;
+        if (effectiveOrgId) {
+          // Include pages from user's organization OR global pages (null organization_id)
+          where[Op.or] = [
+            { organization_id: effectiveOrgId },
+            { organization_id: null }
+          ];
+        } else {
+          // User has no organization_id - only show global pages
+          where.organization_id = null;
+        }
+      }
+      // SUPER_ADMIN: where clause remains empty, sees all pages
+      
       const pages = await PageConfig.findAll({
         attributes: ['page_key', 'title', 'is_download_allowed', 'download_row_limit', 'tenant_access_json', 'organization_id'],
         where,
       });
       
       // Filter by tenant access (in-memory, fast)
+      // Organization filtering is done at DB level, but we still need tenant-level filtering
       if (tenantId || organizationId || userRole) {
         return filterPagesByTenant(pages, tenantId, userRole, organizationId, userOrganizationId);
       }
