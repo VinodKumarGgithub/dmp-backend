@@ -4,6 +4,7 @@
   "description": "PBM Transaction multi-tenant service",
   "main": "server.js",
   "scripts": {
+    "migrate:organizations": "node scripts/migrateOrganizations.js",
     "dev": "cross-env NODE_ENV=development nodemon server.js",
     "start": "nodemon server.js --NODE_ENV=production",
     "test": "jest",
