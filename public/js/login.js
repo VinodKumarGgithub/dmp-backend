@@ -1,3 +1,4 @@
+import { logger } from "../../config/logger";
 
 // API Base URL - dynamically determine based on current host
 const API_BASE = window.location.protocol + '//' + window.location.host;
@@ -58,7 +59,7 @@ window.location.href = "index.html";
 
       data = await data.json()
       token = await  data.data?.token ?? null
-      console.log(data)
+      // console.log(data)
       if(data.success == false){ 
         return showMessage(`Login failed: ${data.error.message}`);
       } else {
@@ -81,7 +82,7 @@ window.location.href = "index.html";
 }
     } catch (err) {
       showMessage('An unexpected error occurred. Try again.', 'error');
-      console.error(err);
+      logger.error(err);
     }
   });
 
