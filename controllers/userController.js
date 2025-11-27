@@ -14,13 +14,32 @@ const {
 // List all admin users
 async function listUsers(req, res, next) {
   try {
+    const whereClause = {};
+    
+    // Filter by organization: SUPER_ADMIN sees all, others see only their org
+    if (req.user?.role !== 'SUPER_ADMIN') {
+      if (req.user?.organization_id) {
+        // Regular users see only users from their organization
+        whereClause.organization_id = req.user.organization_id;
+      } else {
+        // User has no organization_id - return empty (shouldn't happen for non-SUPER_ADMIN)
+        return res.json(success([], 'Users fetched successfully'));
+      }
+    }
+    // SUPER_ADMIN: whereClause remains empty, sees all users
+    
     const users = await AdminUser.findAll({
-      attributes: ['id', 'username', 'name', 'email', 'phone_number', 'role', 'is_blocked', 'blocked_reason', 'blocked_at', 'createdon', 'updatedon'],
+      where: whereClause,
+      attributes: ['id', 'username', 'name', 'email', 'phone_number', 'role', 'organization_id', 'is_blocked', 'blocked_reason', 'blocked_at', 'createdon', 'updatedon'],
       order: [['createdon', 'DESC']],
       raw: true,
     });
+    
     const userIds = users.map((user) => user.id);
-    const permissionsMap = await getPermissionsForUsers(userIds);
+    // For non-SUPER_ADMIN, filter permissions by organization
+    // For SUPER_ADMIN, show all permissions (or could filter by specific org if needed)
+    const organizationId = req.user?.role === 'SUPER_ADMIN' ? null : req.user?.organization_id;
+    const permissionsMap = await getPermissionsForUsers(userIds, organizationId);
     const enrichedUsers = users.map((user) => {
       const perms = permissionsMap.get(user.id) || { tenants: [], pages: [] };
       return {
@@ -41,15 +60,25 @@ async function createUser(req, res, next) {
     const schema = Joi.object({
       username: Joi.string().required().min(3).max(50).pattern(/^[a-zA-Z0-9_]+$/),
       password: Joi.string().required().min(6).max(100),
+      organization_id: Joi.string().allow(null, '').when('role', {
+        is: 'SUPER_ADMIN',
+        then: Joi.optional(),
+        otherwise: Joi.required()
+      }),
       name: Joi.string().allow('', null).max(100).optional(),
       email: Joi.string().email().allow('', null).max(255).optional(),
       phone_number: Joi.string().allow('', null).max(20).optional(),
-      role: Joi.string().valid('ADMIN', 'MANAGER', 'USER', 'DEVELOPER').default('USER'),
+      role: Joi.string().valid('SUPER_ADMIN', 'ADMIN', 'MANAGER', 'USER', 'DEVELOPER').default('USER'),
       tenantIds: Joi.array().items(Joi.string().trim()).default([]),
       pageKeys: Joi.array().items(Joi.string().trim()).default([]),
     });
 
     const data = validate(schema, req.body);
+
+    // Prevent non-SUPER_ADMIN from creating SUPER_ADMIN
+    if (data.role === 'SUPER_ADMIN' && req.user?.role !== 'SUPER_ADMIN') {
+      return next(fromCode('FORBIDDEN', ['You do not have permission to create users with this role']));
+    }
 
     // Check if username already exists
     const existing = await AdminUser.findOne({ where: { username: data.username } });
@@ -63,6 +92,7 @@ async function createUser(req, res, next) {
     // Create user
     const user = await AdminUser.create({
       username: data.username,
+      organization_id: data.organization_id || null,
       password_hash: passwordHash,
       name: data.name || null,
       email: data.email || null,
@@ -74,11 +104,16 @@ async function createUser(req, res, next) {
     const tenantIds = Array.isArray(data.tenantIds) ? data.tenantIds : [];
     const pageKeys = Array.isArray(data.pageKeys) ? data.pageKeys : [];
 
-    if (effectiveRole !== 'ADMIN' && effectiveRole !== 'MANAGER' && effectiveRole !== 'DEVELOPER' && tenantIds.length === 0) {
+    if (effectiveRole !== 'SUPER_ADMIN' && effectiveRole !== 'ADMIN' && effectiveRole !== 'MANAGER' && effectiveRole !== 'DEVELOPER' && tenantIds.length === 0) {
       return next(fromCode('VALIDATION_ERROR', ['Please assign at least one tenant']));
     }
 
-    const permissions = await setUserPermissions(user.id, tenantIds, pageKeys);
+    const organizationId = user.organization_id || data.organization_id;
+    if (!organizationId && effectiveRole !== 'SUPER_ADMIN') {
+      return next(fromCode('VALIDATION_ERROR', ['Organization ID is required']));
+    }
+
+    const permissions = organizationId ? await setUserPermissions(user.id, tenantIds, pageKeys, organizationId) : { tenants: [], pages: [] };
 
     // Return user without password hash
     const userResponse = {
@@ -107,10 +142,11 @@ async function updateUser(req, res, next) {
     const { id } = req.params;
     const schema = Joi.object({
       password: Joi.string().min(6).max(100).optional(),
+      organization_id: Joi.string().allow(null, '').optional(),
       name: Joi.string().allow('', null).max(100).optional(),
       email: Joi.string().email().allow('', null).max(255).optional(),
       phone_number: Joi.string().allow('', null).max(20).optional(),
-      role: Joi.string().valid('ADMIN', 'MANAGER', 'USER', 'DEVELOPER').optional(),
+      role: Joi.string().valid('SUPER_ADMIN', 'ADMIN', 'MANAGER', 'USER', 'DEVELOPER').optional(),
       tenantIds: Joi.array().items(Joi.string().trim()).optional(),
       pageKeys: Joi.array().items(Joi.string().trim()).optional(),
     });
@@ -122,6 +158,23 @@ async function updateUser(req, res, next) {
       return next(fromCode('NOT_FOUND', [`User with id ${id} not found`]));
     }
 
+    // Prevent non-SUPER_ADMIN from accessing users from other organizations
+    if (req.user?.role !== 'SUPER_ADMIN') {
+      if (!req.user?.organization_id || user.organization_id !== req.user.organization_id) {
+        return next(fromCode('FORBIDDEN', ['You can only update users from your own organization']));
+      }
+    }
+
+    // Prevent non-SUPER_ADMIN from updating users to SUPER_ADMIN
+    if (data.role === 'SUPER_ADMIN' && req.user?.role !== 'SUPER_ADMIN') {
+      return next(fromCode('FORBIDDEN', ['You do not have permission to assign this role']));
+    }
+
+    // Prevent non-SUPER_ADMIN from updating existing SUPER_ADMIN users
+    if (user.role === 'SUPER_ADMIN' && req.user?.role !== 'SUPER_ADMIN') {
+      return next(fromCode('FORBIDDEN', ['You do not have permission to update this user']));
+    }
+
     // Update password if provided
     if (data.password) {
       const passwordHash = await bcrypt.hash(data.password, 10);
@@ -131,6 +184,11 @@ async function updateUser(req, res, next) {
     // Update role if provided
     if (data.role) {
       user.role = data.role;
+    }
+
+    // Update organization_id if provided
+    if (data.organization_id !== undefined) {
+      user.organization_id = data.organization_id || null;
     }
 
     // Update name, email, phone_number if provided
@@ -145,7 +203,7 @@ async function updateUser(req, res, next) {
     }
 
     // Save if any changes
-    if (data.password || data.role || data.name !== undefined || data.email !== undefined || data.phone_number !== undefined) {
+    if (data.password || data.role || data.organization_id !== undefined || data.name !== undefined || data.email !== undefined || data.phone_number !== undefined) {
       await user.save();
     }
 
@@ -156,11 +214,16 @@ async function updateUser(req, res, next) {
       const tenantIds = data.tenantIds !== undefined ? data.tenantIds : currentPermissions.tenants;
       const pageKeys = data.pageKeys !== undefined ? data.pageKeys : currentPermissions.pages;
 
-      if (user.role !== 'ADMIN' && user.role !== 'MANAGER' && user.role !== 'DEVELOPER' && tenantIds.length === 0) {
+      if (user.role !== 'SUPER_ADMIN' && user.role !== 'ADMIN' && user.role !== 'MANAGER' && user.role !== 'DEVELOPER' && tenantIds.length === 0) {
         return next(fromCode('VALIDATION_ERROR', ['Please assign at least one tenant']));
       }
 
-      latestPermissions = await setUserPermissions(user.id, tenantIds, pageKeys);
+      const organizationId = user.organization_id;
+      if (!organizationId && user.role !== 'SUPER_ADMIN') {
+        return next(fromCode('VALIDATION_ERROR', ['Organization ID is required']));
+      }
+
+      latestPermissions = organizationId ? await setUserPermissions(user.id, tenantIds, pageKeys, organizationId) : { tenants: [], pages: [] };
     } else {
       latestPermissions = await getUserPermissions(user.id);
     }
@@ -202,6 +265,18 @@ async function deleteUser(req, res, next) {
       return next(fromCode('FORBIDDEN', ['You cannot delete your own account']));
     }
 
+    // Prevent non-SUPER_ADMIN from deleting users from other organizations
+    if (req.user?.role !== 'SUPER_ADMIN') {
+      if (!req.user?.organization_id || user.organization_id !== req.user.organization_id) {
+        return next(fromCode('FORBIDDEN', ['You can only delete users from your own organization']));
+      }
+    }
+
+    // Prevent non-SUPER_ADMIN from deleting SUPER_ADMIN users
+    if (user.role === 'SUPER_ADMIN' && req.user?.role !== 'SUPER_ADMIN') {
+      return next(fromCode('FORBIDDEN', ['You do not have permission to delete this user']));
+    }
+
     await deleteUserPermissions(user.id);
     await user.destroy();
 
@@ -218,14 +293,21 @@ async function getUserById(req, res, next) {
     const { id } = req.params;
 
     const user = await AdminUser.findByPk(id, {
-      attributes: ['id', 'username', 'name', 'email', 'phone_number', 'role', 'is_blocked', 'blocked_reason', 'blocked_at', 'createdon', 'updatedon'],
+      attributes: ['id', 'username', 'name', 'email', 'phone_number', 'role', 'organization_id', 'is_blocked', 'blocked_reason', 'blocked_at', 'createdon', 'updatedon'],
     });
 
     if (!user) {
       return next(fromCode('NOT_FOUND', [`User with id ${id} not found`]));
     }
 
-    const permissions = await getUserPermissions(user.id);
+    // Prevent non-SUPER_ADMIN from accessing users from other organizations
+    if (req.user?.role !== 'SUPER_ADMIN') {
+      if (!req.user?.organization_id || user.organization_id !== req.user.organization_id) {
+        return next(fromCode('FORBIDDEN', ['You can only view users from your own organization']));
+      }
+    }
+
+    const permissions = await getUserPermissions(user.id, user.organization_id);
     const userResponse = {
       ...user.toJSON(),
       tenant_permissions: permissions.tenants,

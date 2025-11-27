@@ -8,6 +8,11 @@ const PageConfig = masterSequelize.define('page_config', {
     primaryKey: true,
     allowNull: false
   },
+  organization_id: {
+    type: DataTypes.STRING,
+    allowNull: true,
+    comment: 'Organization/Client ID. NULL = available to all organizations'
+  },
   page_key: {
     type: DataTypes.STRING,
     allowNull: false,
@@ -75,7 +80,10 @@ const PageConfig = masterSequelize.define('page_config', {
   }
 }, {
   tableName: 'page_configs',
-  timestamps: false
+  timestamps: false,
+  indexes: [
+    { fields: ['organization_id'] },
+  ]
 });
 
 module.exports = { PageConfig };

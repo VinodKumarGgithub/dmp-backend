@@ -9,17 +9,28 @@ async function authMiddleware(req, res, next) {
   try {
     const payload = jwt.verify(token, process.env.JWT_SECRET || 'changeme');
     
-    // Check if user is blocked
+    // Fetch user from DB to verify status and get latest role/organization
     const user = await AdminUser.findOne({ where: { username: payload.username } });
-    if (user && user.is_blocked) {
+    if (!user) {
+      return next(fromCode('UNAUTHORIZED'));
+    }
+    
+    if (user.is_blocked) {
       return next(fromCode('USER_BLOCKED', [
         user.blocked_reason || 'Your account has been blocked. Please contact an administrator.'
       ]));
     }
     
+    // Use role and organization_id from DB (not token) - ensures immediate effect of changes
     req.user = {
       ...payload,
-      userId: payload.userId || payload.id || payload.username,
+      userId: user.id,
+      role: user.role,  // From DB, not token - role changes take effect immediately
+      organization_id: user.organization_id,  // From DB, not token
+      name: user.name,
+      email: user.email,
+      phone_number: user.phone_number,
+      profile_picture: user.profile_picture
     };
     next();
   } catch (e) {

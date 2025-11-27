@@ -8,6 +8,7 @@ const tenantService = {
   async createTenant(masterDb, payload) {
     const schema = Joi.object({
       id: Joi.string().required(),
+      organization_id: Joi.string().required(),
       name: Joi.string().required().min(2).max(100),
       dialect: Joi.string().valid('mysql', 'mssql').default('mysql'),
       db_host: Joi.string().required().hostname(),
@@ -44,6 +45,10 @@ const tenantService = {
     
     if (filters.status) {
       whereClause.status = filters.status;
+    }
+    
+    if (filters.organization_id) {
+      whereClause.organization_id = filters.organization_id;
     }
     
     if (filters.search) {

@@ -1,11 +1,24 @@
 const { tenantService } = require('../services/tenantService');
 const { success, error } = require('../utils/responseHandler');
+const { fromCode } = require('../utils/errors');
 const { masterSequelize } = require('../config/db');
 
 module.exports = {
   // Create new tenant
   createTenant: async function(req, res, next) {
     try {
+      // Prevent non-SUPER_ADMIN from creating tenants for other organizations
+      if (req.user?.role !== 'SUPER_ADMIN') {
+        if (!req.user?.organization_id) {
+          return next(fromCode('FORBIDDEN', ['Organization ID is required']));
+        }
+        // Auto-set organization_id for non-SUPER_ADMIN users
+        req.body.organization_id = req.user.organization_id;
+      } else if (!req.body.organization_id) {
+        // SUPER_ADMIN must provide organization_id
+        return next(fromCode('VALIDATION_ERROR', ['Organization ID is required']));
+      }
+      
       const tenant = await tenantService.createTenant(masterSequelize, req.body);
       const response = success(tenant, "Tenant created successfully!");
       res.status(201).json(response);
@@ -19,8 +32,22 @@ module.exports = {
     try {
       const filters = {
         status: req.query.status,
-        search: req.query.search
+        search: req.query.search,
       };
+      
+      // Filter by organization: SUPER_ADMIN sees all, others see only their org
+      if (req.user?.role !== 'SUPER_ADMIN') {
+        if (req.user?.organization_id) {
+          filters.organization_id = req.user.organization_id;
+        } else {
+          // User has no organization_id - return empty
+          return res.json(success([], "Tenants fetched successfully!"));
+        }
+      } else if (req.query.organization_id) {
+        // SUPER_ADMIN can filter by organization_id if provided
+        filters.organization_id = req.query.organization_id;
+      }
+      // SUPER_ADMIN without filter: sees all tenants
       
       const tenants = await tenantService.listTenants(masterSequelize, filters);
       const response = success(tenants, "Tenants fetched successfully!");
@@ -35,6 +62,14 @@ module.exports = {
     try {
       const { id } = req.params;
       const tenant = await tenantService.getTenantById(masterSequelize, id);
+      
+      // Prevent non-SUPER_ADMIN from accessing tenants from other organizations
+      if (req.user?.role !== 'SUPER_ADMIN') {
+        if (!req.user?.organization_id || tenant.organization_id !== req.user.organization_id) {
+          return next(fromCode('FORBIDDEN', ['You can only view tenants from your own organization']));
+        }
+      }
+      
       const response = success(tenant, "Tenant fetched successfully!");
       res.json(response);
     } catch (err) {
@@ -46,6 +81,19 @@ module.exports = {
   updateTenant: async function(req, res, next) {
     try {
       const { id } = req.params;
+      
+      // First get the tenant to check organization
+      const existingTenant = await tenantService.getTenantById(masterSequelize, id);
+      
+      // Prevent non-SUPER_ADMIN from updating tenants from other organizations
+      if (req.user?.role !== 'SUPER_ADMIN') {
+        if (!req.user?.organization_id || existingTenant.organization_id !== req.user.organization_id) {
+          return next(fromCode('FORBIDDEN', ['You can only update tenants from your own organization']));
+        }
+        // Prevent non-SUPER_ADMIN from changing organization_id
+        delete req.body.organization_id;
+      }
+      
       const tenant = await tenantService.updateTenant(masterSequelize, id, req.body);
       const response = success(tenant, "Tenant updated successfully!");
       res.json(response);
@@ -58,6 +106,17 @@ module.exports = {
   deleteTenant: async function(req, res, next) {
     try {
       const { id } = req.params;
+      
+      // First get the tenant to check organization
+      const tenant = await tenantService.getTenantById(masterSequelize, id);
+      
+      // Prevent non-SUPER_ADMIN from deleting tenants from other organizations
+      if (req.user?.role !== 'SUPER_ADMIN') {
+        if (!req.user?.organization_id || tenant.organization_id !== req.user.organization_id) {
+          return next(fromCode('FORBIDDEN', ['You can only delete tenants from your own organization']));
+        }
+      }
+      
       const result = await tenantService.deleteTenant(masterSequelize, id);
       const response = success(result, "Tenant deleted successfully!");
       res.json(response);
@@ -70,6 +129,17 @@ module.exports = {
   testTenantConnection: async function(req, res, next) {
     try {
       const { id } = req.params;
+      
+      // First get the tenant to check organization
+      const tenant = await tenantService.getTenantById(masterSequelize, id);
+      
+      // Prevent non-SUPER_ADMIN from testing tenants from other organizations
+      if (req.user?.role !== 'SUPER_ADMIN') {
+        if (!req.user?.organization_id || tenant.organization_id !== req.user.organization_id) {
+          return next(fromCode('FORBIDDEN', ['You can only test tenants from your own organization']));
+        }
+      }
+      
       const result = await tenantService.testTenantConnection(masterSequelize, id);
       const response = success(result, result.success ? "Connection test successful!" : "Connection test failed!");
       res.json(response);

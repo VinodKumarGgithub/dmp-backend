@@ -146,8 +146,24 @@ async function getPreferences(req, res, next) {
       return next(fromCode('UNAUTHORIZED', ['User ID not found in token']));
     }
 
+    // Get user's organization_id
+    const organizationId = req.user?.organization_id;
+    if (!organizationId && req.user?.role !== 'SUPER_ADMIN') {
+      return next(fromCode('FORBIDDEN', ['Organization ID is required']));
+    }
+
+    // For preferences, we need an organization_id (model requires it)
+    // SUPER_ADMIN without org_id will use a special identifier
+    const effectiveOrgId = organizationId || (req.user?.role === 'SUPER_ADMIN' ? '__SUPER_ADMIN__' : null);
+    if (!effectiveOrgId) {
+      return next(fromCode('FORBIDDEN', ['Organization ID is required for preferences']));
+    }
+
     const preference = await UserPreference.findOne({
-      where: { user_id: userId },
+      where: { 
+        user_id: userId,
+        organization_id: effectiveOrgId
+      },
     });
 
     // Return defaults if no preferences exist
@@ -200,9 +216,26 @@ async function updatePreferences(req, res, next) {
       ...data, // Include any additional fields
     };
 
+    // Get user's organization_id
+    const organizationId = req.user?.organization_id;
+    if (!organizationId && req.user?.role !== 'SUPER_ADMIN') {
+      return next(fromCode('FORBIDDEN', ['Organization ID is required']));
+    }
+
+    // For preferences, we need an organization_id (model requires it)
+    // SUPER_ADMIN without org_id will use a special identifier
+    const effectiveOrgId = organizationId || (req.user?.role === 'SUPER_ADMIN' ? '__SUPER_ADMIN__' : null);
+    if (!effectiveOrgId) {
+      return next(fromCode('FORBIDDEN', ['Organization ID is required for preferences']));
+    }
+
     const [preference] = await UserPreference.findOrCreate({
-      where: { user_id: userId },
+      where: { 
+        user_id: userId,
+        organization_id: effectiveOrgId
+      },
       defaults: {
+        organization_id: effectiveOrgId,
         preferences_json: JSON.stringify(preferences),
         createdon: new Date(),
         updatedon: new Date(),

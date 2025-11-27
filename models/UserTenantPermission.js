@@ -7,6 +7,11 @@ const UserTenantPermission = masterSequelize.define('user_tenant_permission', {
     autoIncrement: true,
     primaryKey: true,
   },
+  organization_id: {
+    type: DataTypes.STRING,
+    allowNull: false,
+    comment: 'Organization/Client ID for this permission'
+  },
   user_id: {
     type: DataTypes.INTEGER,
     allowNull: false,
@@ -20,8 +25,9 @@ const UserTenantPermission = masterSequelize.define('user_tenant_permission', {
   timestamps: false,
   indexes: [
     { fields: ['user_id'] },
+    { fields: ['organization_id'] },
     { fields: ['tenant_id'] },
-    { fields: ['user_id', 'tenant_id'], unique: true },
+    { fields: ['user_id', 'organization_id', 'tenant_id'], unique: true },
   ],
 });
 

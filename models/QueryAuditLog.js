@@ -11,6 +11,11 @@ const QueryAuditLog = masterSequelize.define('query_audit_log', {
     primaryKey: true,
     allowNull: false
   },
+  organization_id: {
+    type: DataTypes.STRING,
+    allowNull: true,
+    comment: 'Organization/Client ID for audit tracking'
+  },
   page_key: {
     type: DataTypes.STRING,
     allowNull: false,
@@ -92,6 +97,7 @@ const QueryAuditLog = masterSequelize.define('query_audit_log', {
   createdAt: 'createdOn',
   updatedAt: false,
   indexes: [
+    { fields: ['organization_id'] },
     { fields: ['page_key', 'createdOn'] },
     { fields: ['tenant_id', 'createdOn'] },
     { fields: ['user_id', 'createdOn'] },

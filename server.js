@@ -13,12 +13,12 @@ const { health } = require('./controllers/healthController');
 
 const app = express();
 // app.use(xss());
-app.use(helmet());
+// app.use(helmet());
 app.use(cors(
   {
     origin: process.env.CORS_ORIGIN || '*',
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'x-tenant-id'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-tenant-id', 'x-has-branding'],
   }
 ));
 app.use(morgan('dev'));

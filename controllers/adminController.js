@@ -8,7 +8,10 @@ module.exports = {
   // GET /api/admin/users/blocked - Get all blocked users
   async getBlockedUsers(req, res, next) {
     try {
-      const blockedUsers = await userBlockingService.getBlockedUsers();
+      // Pass organization_id to service for filtering
+      // SUPER_ADMIN passes null to see all, others pass their organization_id
+      const organizationId = req.user?.role === 'SUPER_ADMIN' ? null : req.user?.organization_id;
+      const blockedUsers = await userBlockingService.getBlockedUsers(organizationId);
       res.json(success(blockedUsers, 'Blocked users fetched successfully'));
     } catch (err) {
       next(err);
@@ -23,6 +26,24 @@ module.exports = {
 
       if (!reason || typeof reason !== 'string' || !reason.trim()) {
         return next(fromCode('VALIDATION_ERROR', ['Block reason is required']));
+      }
+
+      // First fetch the user to check organization and role
+      const targetUser = await AdminUser.findByPk(parseInt(userId, 10));
+      if (!targetUser) {
+        return next(fromCode('NOT_FOUND', [`User with id ${userId} not found`]));
+      }
+
+      // Prevent blocking SUPER_ADMIN
+      if (targetUser.role === 'SUPER_ADMIN') {
+        return next(fromCode('FORBIDDEN', ['This user cannot be blocked']));
+      }
+
+      // Prevent non-SUPER_ADMIN from blocking users from other organizations
+      if (req.user?.role !== 'SUPER_ADMIN') {
+        if (!req.user?.organization_id || targetUser.organization_id !== req.user.organization_id) {
+          return next(fromCode('FORBIDDEN', ['You can only block users from your own organization']));
+        }
       }
 
       const blockedUser = await userBlockingService.blockUser(
@@ -41,6 +62,20 @@ module.exports = {
   async unblockUser(req, res, next) {
     try {
       const { userId } = req.params;
+      
+      // First fetch the user to check organization
+      const targetUser = await AdminUser.findByPk(parseInt(userId, 10));
+      if (!targetUser) {
+        return next(fromCode('NOT_FOUND', [`User with id ${userId} not found`]));
+      }
+
+      // Prevent non-SUPER_ADMIN from unblocking users from other organizations
+      if (req.user?.role !== 'SUPER_ADMIN') {
+        if (!req.user?.organization_id || targetUser.organization_id !== req.user.organization_id) {
+          return next(fromCode('FORBIDDEN', ['You can only unblock users from your own organization']));
+        }
+      }
+
       const unblockedUser = await userBlockingService.unblockUser(parseInt(userId, 10));
       res.json(success(unblockedUser, 'User unblocked successfully'));
     } catch (err) {
@@ -51,8 +86,22 @@ module.exports = {
   // GET /api/admin/users - Get all users (with blocking status)
   async getAllUsers(req, res, next) {
     try {
+      const whereClause = {};
+      
+      // Filter by organization: SUPER_ADMIN sees all, others see only their org
+      if (req.user?.role !== 'SUPER_ADMIN') {
+        if (req.user?.organization_id) {
+          whereClause.organization_id = req.user.organization_id;
+        } else {
+          // User has no organization_id - return empty
+          return res.json(success([], 'Users fetched successfully'));
+        }
+      }
+      // SUPER_ADMIN: whereClause remains empty, sees all users
+      
       const users = await AdminUser.findAll({
-        attributes: ['id', 'username', 'role', 'is_blocked', 'blocked_reason', 'blocked_at', 'createdon'],
+        where: whereClause,
+        attributes: ['id', 'username', 'role', 'organization_id', 'is_blocked', 'blocked_reason', 'blocked_at', 'createdon'],
         order: [['createdon', 'DESC']]
       });
 
@@ -60,6 +109,7 @@ module.exports = {
         id: user.id,
         username: user.username,
         role: user.role,
+        organization_id: user.organization_id,
         is_blocked: user.is_blocked,
         blocked_reason: user.blocked_reason,
         blocked_at: user.blocked_at,
@@ -76,10 +126,21 @@ module.exports = {
   async getPageTenantAccess(req, res, next) {
     try {
       const { pageKey } = req.params;
-      const page = await PageConfig.findOne({ where: { page_key: pageKey } });
+      const page = await PageConfig.findOne({ 
+        where: { page_key: pageKey },
+        attributes: ['tenant_access_json', 'organization_id']
+      });
       
       if (!page) {
         return next(fromCode('PAGE_NOT_FOUND', [`Page '${pageKey}' not found`]));
+      }
+
+      // Prevent non-SUPER_ADMIN from accessing pages from other organizations
+      if (req.user?.role !== 'SUPER_ADMIN') {
+        // Allow access to global pages (null organization_id) or pages from user's organization
+        if (page.organization_id && page.organization_id !== req.user?.organization_id) {
+          return next(fromCode('FORBIDDEN', ['You can only access pages from your own organization']));
+        }
       }
 
       // Parse tenant access JSON
@@ -113,10 +174,21 @@ module.exports = {
         return next(fromCode('VALIDATION_ERROR', ['tenantIds must be an array']));
       }
 
-      const page = await PageConfig.findOne({ where: { page_key: pageKey } });
+      const page = await PageConfig.findOne({ 
+        where: { page_key: pageKey },
+        attributes: ['tenant_access_json', 'organization_id']
+      });
       
       if (!page) {
         return next(fromCode('PAGE_NOT_FOUND', [`Page '${pageKey}' not found`]));
+      }
+
+      // Prevent non-SUPER_ADMIN from updating pages from other organizations
+      if (req.user?.role !== 'SUPER_ADMIN') {
+        // Allow access to global pages (null organization_id) or pages from user's organization
+        if (page.organization_id && page.organization_id !== req.user?.organization_id) {
+          return next(fromCode('FORBIDDEN', ['You can only update pages from your own organization']));
+        }
       }
 
       // Update tenant_access_json

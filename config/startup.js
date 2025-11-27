@@ -9,11 +9,14 @@ const { UserPagePermission } = require('../models/UserPagePermission');
 const { UserPreference } = require('../models/UserPreference');
 const { UserTenantPermission } = require('../models/UserTenantPermission');
 const { UserPagePreference } = require('../models/UserPagePreference');
+const { Organization } = require('../models/Organization');
 
 async function testMasterDbConnection() {
   try {
     await masterSequelize.authenticate();
-    await masterSequelize.sync({ alter: true });
+    // Ensure Organization model is initialized (for login branding)
+    // Note: We don't sync here to avoid altering production tables
+    // The table should be created via migration
     logger.info('✅ Master DB connection established successfully.');
   } catch (err) {
     console.error(err)

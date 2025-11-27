@@ -3,6 +3,7 @@ const { mapDbError } = require('../utils/dbErrorMapper');
 const { PageConfig } = require('../models/PageConfig');
 const { dbMetadataService } = require('./dbMetadataService');
 const { validateProcedureSql } = require('../utils/sqlSecurity');
+const { Op } = require('sequelize');
 const crypto = require('crypto');
 const LOG_ENCRYPTION_KEY = process.env.LOG_ENCRYPTION_KEY || '';
 const getEncryptionKey = () => {
@@ -421,43 +422,51 @@ function encryptSql(sqlText) {
 }
 
 /**
- * Log query execution to audit log (async, non-blocking)
+ * Log query execution to audit log (truly async, non-blocking, fire-and-forget)
+ * Uses setImmediate to ensure it doesn't block the call stack
  */
-async function logQueryExecution(auditData) {
-  try {
-    const { QueryAuditLog } = require('../models/QueryAuditLog');
-    const { generateId } = require('../utils/idGenerator');
-    
-    const resolvedSeverity = auditData.severity || determineSeverity(auditData.executionTime);
-    const resolvedActionType = auditData.actionType || 'data_query';
-    const resolvedErrorCode = auditData.errorCode || (auditData.success === false ? 'DB_QUERY_ERROR' : null);
-    const encryptedSql = encryptSql(auditData.sqlText);
+function logQueryExecution(auditData) {
+  // Fire-and-forget: use setImmediate to ensure it runs in next event loop tick
+  setImmediate(async () => {
+    try {
+      const { QueryAuditLog } = require('../models/QueryAuditLog');
+      const { generateId } = require('../utils/idGenerator');
+      
+      const resolvedSeverity = auditData.severity || determineSeverity(auditData.executionTime);
+      const resolvedActionType = auditData.actionType || 'data_query';
+      const resolvedErrorCode = auditData.errorCode || (auditData.success === false ? 'DB_QUERY_ERROR' : null);
+      const encryptedSql = encryptSql(auditData.sqlText);
 
-    const logEntry = {
-      id: generateId('audit'),
-      page_key: auditData.pageKey,
-      tenant_id: auditData.tenantId,
-      user_id: auditData.userId,
-      ip_address: auditData.ipAddress,
-      encrypted_sql: encryptedSql,
-      execution_time_ms: auditData.executionTime,
-      rows_returned: auditData.rowsReturned,
-      success: auditData.success,
-      error_message: auditData.errorMessage,
-      query_params: auditData.queryParams ? JSON.stringify(auditData.queryParams) : null,
-      action_type: resolvedActionType,
-      severity: resolvedSeverity,
-      error_code: resolvedErrorCode,
-      source_type: auditData.sourceType || null,
-      data_source: auditData.dataSource || null,
-      query_context: auditData.queryContext ? JSON.stringify(auditData.queryContext) : null
-    };
+      const logEntry = {
+        id: generateId('audit'),
+        organization_id: auditData.organizationId || null,
+        page_key: auditData.pageKey,
+        tenant_id: auditData.tenantId,
+        user_id: auditData.userId,
+        ip_address: auditData.ipAddress,
+        encrypted_sql: encryptedSql,
+        execution_time_ms: auditData.executionTime,
+        rows_returned: auditData.rowsReturned,
+        success: auditData.success,
+        error_message: auditData.errorMessage,
+        query_params: auditData.queryParams ? JSON.stringify(auditData.queryParams) : null,
+        action_type: resolvedActionType,
+        severity: resolvedSeverity,
+        error_code: resolvedErrorCode,
+        source_type: auditData.sourceType || null,
+        data_source: auditData.dataSource || null,
+        query_context: auditData.queryContext ? JSON.stringify(auditData.queryContext) : null
+      };
 
-    await QueryAuditLog.create(logEntry);
-  } catch (error) {
-    // Don't throw - audit logging failures shouldn't break the main flow
-    console.error('Failed to log query execution:', error);
-  }
+      await QueryAuditLog.create(logEntry);
+    } catch (error) {
+      // Don't throw - audit logging failures shouldn't break the main flow
+      // Only log in dev mode to avoid production noise
+      if (process.env.NODE_ENV === 'development') {
+        console.error('Failed to log query execution:', error);
+      }
+    }
+  });
 }
 
 function applyPaginationClause(sql, limit, offset, sequelize, replacements = {}, keyPrefix = 'proc') {
@@ -535,12 +544,39 @@ function getPageTenants(pageConfig) {
  * Check if a page is accessible to a tenant
  * @param {Object} pageConfig - Page configuration object
  * @param {string} tenantId - Tenant ID to check
- * @param {string} userRole - User role (ADMIN sees all)
+ * @param {string} userRole - User role (SUPER_ADMIN/ADMIN sees all)
+ * @param {string} organizationId - Organization ID to check
+ * @param {string} userOrganizationId - User's organization ID
  * @returns {boolean}
  */
-function isPageAccessible(pageConfig, tenantId, userRole) {
-  // Admin users see all pages
-  if (userRole === 'ADMIN') return true;
+function isPageAccessible(pageConfig, tenantId, userRole, organizationId, userOrganizationId) {
+  // SUPER_ADMIN sees all pages across all organizations
+  if (userRole === 'SUPER_ADMIN') return true;
+  
+  // ADMIN sees all pages in their organization or global pages (null organization_id)
+  if (userRole === 'ADMIN') {
+    // If page has no organization_id, it's global and accessible
+    if (!pageConfig.organization_id) return true;
+    
+    // Check if page belongs to user's organization
+    // Use userOrganizationId (user's org) or organizationId (request context) - both should match
+    const effectiveOrgId = userOrganizationId || organizationId;
+    if (effectiveOrgId) {
+      return String(pageConfig.organization_id) === String(effectiveOrgId);
+    }
+    // If user has no organization_id, they can't access organization-specific pages
+    return false;
+  }
+  
+  // For regular users, check organization access first
+  if (pageConfig.organization_id) {
+    const effectiveOrgId = userOrganizationId || organizationId;
+    if (effectiveOrgId && String(pageConfig.organization_id) !== String(effectiveOrgId)) {
+      return false;  // Page belongs to different organization
+    }
+    // If no organization context, deny access to organization-specific pages
+    if (!effectiveOrgId) return false;
+  }
   
   // If no tenant context, allow (for admin operations)
   if (!tenantId) return true;
@@ -561,30 +597,54 @@ function isPageAccessible(pageConfig, tenantId, userRole) {
  * @param {Array} pages - Array of page configs
  * @param {string} tenantId - Tenant ID to filter by
  * @param {string} userRole - User role
+ * @param {string} organizationId - Organization ID to filter by
+ * @param {string} userOrganizationId - User's organization ID
  * @returns {Array} Filtered pages
  */
-function filterPagesByTenant(pages, tenantId, userRole) {
-  if (userRole === 'ADMIN') return pages;
-  if (!tenantId) return pages;
+function filterPagesByTenant(pages, tenantId, userRole, organizationId, userOrganizationId) {
+  // SUPER_ADMIN sees all pages (organization filtering done at DB level)
+  if (userRole === 'SUPER_ADMIN') return pages;
   
-  return pages.filter(page => isPageAccessible(page, tenantId, userRole));
+  // For ADMIN and others, filter by tenant access
+  // Organization filtering is now done at DB level, but we still need tenant-level filtering
+  if (!tenantId && !organizationId && !userOrganizationId) return pages;
+  
+  return pages.filter(page => isPageAccessible(page, tenantId, userRole, organizationId, userOrganizationId));
 }
 
 const pageService = {
-  async listPages(pageKeyFilter = null, tenantId = null, userRole = null) {
+  async listPages(pageKeyFilter = null, tenantId = null, userRole = null, organizationId = null, userOrganizationId = null) {
     try {
       const where = {};
       if (Array.isArray(pageKeyFilter) && pageKeyFilter.length > 0) {
         where.page_key = pageKeyFilter;
       }
+      
+      // Filter by organization: SUPER_ADMIN sees all, others see only their org or global pages
+      if (userRole !== 'SUPER_ADMIN') {
+        const effectiveOrgId = userOrganizationId || organizationId;
+        if (effectiveOrgId) {
+          // Include pages from user's organization OR global pages (null organization_id)
+          where[Op.or] = [
+            { organization_id: effectiveOrgId },
+            { organization_id: null }
+          ];
+        } else {
+          // User has no organization_id - only show global pages
+          where.organization_id = null;
+        }
+      }
+      // SUPER_ADMIN: where clause remains empty, sees all pages
+      
       const pages = await PageConfig.findAll({
-        attributes: ['page_key', 'title', 'is_download_allowed', 'download_row_limit', 'tenant_access_json'],
+        attributes: ['page_key', 'title', 'is_download_allowed', 'download_row_limit', 'tenant_access_json', 'organization_id'],
         where,
       });
       
       // Filter by tenant access (in-memory, fast)
-      if (tenantId || userRole) {
-        return filterPagesByTenant(pages, tenantId, userRole);
+      // Organization filtering is done at DB level, but we still need tenant-level filtering
+      if (tenantId || organizationId || userRole) {
+        return filterPagesByTenant(pages, tenantId, userRole, organizationId, userOrganizationId);
       }
       
       return pages;
@@ -594,7 +654,7 @@ const pageService = {
     }
   },
 
-  async getPageConfigByKey(pageKey, tenantId = null, userRole = null) {
+  async getPageConfigByKey(pageKey, tenantId = null, userRole = null, organizationId = null, userOrganizationId = null) {
     if (!pageKey || typeof pageKey !== 'string') {
       throw fromCode('VALIDATION_ERROR', ['Page key is required and must be a string']);
     }
@@ -606,8 +666,8 @@ const pageService = {
       }
 
       // Check tenant access
-      if (!isPageAccessible(page, tenantId, userRole)) {
-        throw fromCode('FORBIDDEN', [`Page '${pageKey}' is not accessible for this tenant`]);
+      if (!isPageAccessible(page, tenantId, userRole, organizationId, userOrganizationId)) {
+        throw fromCode('FORBIDDEN', [`Page '${pageKey}' is not accessible for this organization/tenant`]);
       }
 
       try {
@@ -1299,10 +1359,11 @@ const pageService = {
             
             throw enhancedError;
           } finally {
-            // Log query execution (non-blocking)
+            // Log query execution (truly async, non-blocking, fire-and-forget)
             executionTime = executionTime ?? (Date.now() - startTime);
             performance.queryExecutionTimeMs = executionTime;
             logQueryExecution({
+              organizationId: reqDb.organizationId,
               pageKey: config.page_key,
               tenantId: reqDb.tenantId,
               userId: auditContext.userId,
@@ -1316,9 +1377,8 @@ const pageService = {
               actionType,
               sourceType: source_type,
               dataSource: data_source
-            }).catch(() => {
-              // Ignore audit logging errors
             });
+            // No .catch() needed - logQueryExecution is fire-and-forget
           }
 
           let data = Array.isArray(dataRows) ? dataRows : [];
@@ -1412,6 +1472,7 @@ const pageService = {
           executionTime = Date.now() - startTime;
           performance.queryExecutionTimeMs = executionTime;
           logQueryExecution({
+            organizationId: reqDb.organizationId,
             pageKey: config.page_key,
             tenantId: reqDb.tenantId,
             userId: auditContext.userId,
@@ -1425,7 +1486,7 @@ const pageService = {
             actionType,
             sourceType: source_type,
             dataSource: data_source
-          }).catch(() => {});
+          });
         }
 
         if (!Array.isArray(dataRows)) {
@@ -1500,6 +1561,7 @@ const pageService = {
           const executionTime = Date.now() - startTime;
           performance.queryExecutionTimeMs = executionTime;
           logQueryExecution({
+            organizationId: reqDb.organizationId,
             pageKey: config.page_key,
             tenantId: reqDb.tenantId,
             userId: auditContext.userId,
@@ -1513,7 +1575,7 @@ const pageService = {
           actionType,
           sourceType: source_type,
           dataSource: data_source
-          }).catch(() => {});
+          });
         }
         
         data = Array.isArray(dataRows) ? dataRows : [];
@@ -1564,6 +1626,7 @@ const pageService = {
           const executionTime = Date.now() - startTime;
           performance.queryExecutionTimeMs = executionTime;
           logQueryExecution({
+            organizationId: reqDb.organizationId,
             pageKey: config.page_key,
             tenantId: reqDb.tenantId,
             userId: auditContext.userId,
@@ -1577,7 +1640,7 @@ const pageService = {
           actionType,
           sourceType: source_type,
           dataSource: data_source
-          }).catch(() => {});
+          });
         }
 
         data = Array.isArray(dataRows) ? dataRows : [];
@@ -1707,6 +1770,7 @@ const pageService = {
           } finally {
             const executionTime = Date.now() - startTime;
             logQueryExecution({
+              organizationId: reqDb.organizationId,
               pageKey: config.page_key,
               tenantId: reqDb.tenantId,
               userId: auditContext.userId,
@@ -1720,8 +1784,6 @@ const pageService = {
               actionType: 'page_data_download',
               sourceType: source_type,
               dataSource: data_source
-            }).catch(() => {
-              // Ignore audit logging errors
             });
           }
 

@@ -18,13 +18,13 @@ const { requireAdmin } = require('../middleware/roleMiddleware');
 router.post('/', authMiddleware, requireAdmin, createTenant);
 router.get('/', authMiddleware,  listTenants);                      // List all tenants with filtering
 router.get('/stats', authMiddleware, requireAdmin, getTenantStats);              // Get tenant statistics
-router.get('/:id', getTenantById);                 // Public via client credentials handled elsewhere
+router.get('/:id', authMiddleware, getTenantById);                 // Public via client credentials handled elsewhere
 router.put('/:id', authMiddleware, requireAdmin, updateTenant);
 router.delete('/:id', authMiddleware, requireAdmin, deleteTenant);
 
 // Special Operations
 router.post('/bulk', authMiddleware, requireAdmin, bulkCreateTenants);           // Bulk create tenants
-router.post('/:id/test-connection', testTenantConnection); // Test database connection
+router.post('/:id/test-connection', authMiddleware, requireAdmin, testTenantConnection); // Test database connection
 
 module.exports = router;
 
