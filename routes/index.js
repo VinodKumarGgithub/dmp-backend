@@ -7,6 +7,7 @@ const userPreferenceRoutes = require('./userPreferenceRoutes');
 const profileRoutes = require('./profileRoutes');
 const adminRoutes = require('./adminRoutes');
 const organizationRoutes = require('./organizationRoutes');
+const auditLogRoutes = require('./auditLogRoutes');
 const { tenantResolver } = require('../middleware/tenantResolver');
 const { login } = require('../controllers/authController');
 
@@ -23,6 +24,7 @@ router.use('/pages', pageMasterRoutes);
 router.use('/page-preferences', userPreferenceRoutes);
 router.use('/admin', adminRoutes); // Admin feature control and user blocking routes
 router.use('/', organizationRoutes); // Organization branding routes (public + authenticated)
+router.use('/api', auditLogRoutes); // Audit log routes
 
 // Tenant-aware routes (with tenant resolution)
 router.use(tenantResolver);

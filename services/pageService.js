@@ -422,44 +422,51 @@ function encryptSql(sqlText) {
 }
 
 /**
- * Log query execution to audit log (async, non-blocking)
+ * Log query execution to audit log (truly async, non-blocking, fire-and-forget)
+ * Uses setImmediate to ensure it doesn't block the call stack
  */
-async function logQueryExecution(auditData) {
-  try {
-    const { QueryAuditLog } = require('../models/QueryAuditLog');
-    const { generateId } = require('../utils/idGenerator');
-    
-    const resolvedSeverity = auditData.severity || determineSeverity(auditData.executionTime);
-    const resolvedActionType = auditData.actionType || 'data_query';
-    const resolvedErrorCode = auditData.errorCode || (auditData.success === false ? 'DB_QUERY_ERROR' : null);
-    const encryptedSql = encryptSql(auditData.sqlText);
+function logQueryExecution(auditData) {
+  // Fire-and-forget: use setImmediate to ensure it runs in next event loop tick
+  setImmediate(async () => {
+    try {
+      const { QueryAuditLog } = require('../models/QueryAuditLog');
+      const { generateId } = require('../utils/idGenerator');
+      
+      const resolvedSeverity = auditData.severity || determineSeverity(auditData.executionTime);
+      const resolvedActionType = auditData.actionType || 'data_query';
+      const resolvedErrorCode = auditData.errorCode || (auditData.success === false ? 'DB_QUERY_ERROR' : null);
+      const encryptedSql = encryptSql(auditData.sqlText);
 
-    const logEntry = {
-      id: generateId('audit'),
-      organization_id: auditData.organizationId || null,
-      page_key: auditData.pageKey,
-      tenant_id: auditData.tenantId,
-      user_id: auditData.userId,
-      ip_address: auditData.ipAddress,
-      encrypted_sql: encryptedSql,
-      execution_time_ms: auditData.executionTime,
-      rows_returned: auditData.rowsReturned,
-      success: auditData.success,
-      error_message: auditData.errorMessage,
-      query_params: auditData.queryParams ? JSON.stringify(auditData.queryParams) : null,
-      action_type: resolvedActionType,
-      severity: resolvedSeverity,
-      error_code: resolvedErrorCode,
-      source_type: auditData.sourceType || null,
-      data_source: auditData.dataSource || null,
-      query_context: auditData.queryContext ? JSON.stringify(auditData.queryContext) : null
-    };
+      const logEntry = {
+        id: generateId('audit'),
+        organization_id: auditData.organizationId || null,
+        page_key: auditData.pageKey,
+        tenant_id: auditData.tenantId,
+        user_id: auditData.userId,
+        ip_address: auditData.ipAddress,
+        encrypted_sql: encryptedSql,
+        execution_time_ms: auditData.executionTime,
+        rows_returned: auditData.rowsReturned,
+        success: auditData.success,
+        error_message: auditData.errorMessage,
+        query_params: auditData.queryParams ? JSON.stringify(auditData.queryParams) : null,
+        action_type: resolvedActionType,
+        severity: resolvedSeverity,
+        error_code: resolvedErrorCode,
+        source_type: auditData.sourceType || null,
+        data_source: auditData.dataSource || null,
+        query_context: auditData.queryContext ? JSON.stringify(auditData.queryContext) : null
+      };
 
-    await QueryAuditLog.create(logEntry);
-  } catch (error) {
-    // Don't throw - audit logging failures shouldn't break the main flow
-    console.error('Failed to log query execution:', error);
-  }
+      await QueryAuditLog.create(logEntry);
+    } catch (error) {
+      // Don't throw - audit logging failures shouldn't break the main flow
+      // Only log in dev mode to avoid production noise
+      if (process.env.NODE_ENV === 'development') {
+        console.error('Failed to log query execution:', error);
+      }
+    }
+  });
 }
 
 function applyPaginationClause(sql, limit, offset, sequelize, replacements = {}, keyPrefix = 'proc') {
@@ -1352,7 +1359,7 @@ const pageService = {
             
             throw enhancedError;
           } finally {
-            // Log query execution (non-blocking)
+            // Log query execution (truly async, non-blocking, fire-and-forget)
             executionTime = executionTime ?? (Date.now() - startTime);
             performance.queryExecutionTimeMs = executionTime;
             logQueryExecution({
@@ -1370,9 +1377,8 @@ const pageService = {
               actionType,
               sourceType: source_type,
               dataSource: data_source
-            }).catch(() => {
-              // Ignore audit logging errors
             });
+            // No .catch() needed - logQueryExecution is fire-and-forget
           }
 
           let data = Array.isArray(dataRows) ? dataRows : [];
@@ -1480,7 +1486,7 @@ const pageService = {
             actionType,
             sourceType: source_type,
             dataSource: data_source
-          }).catch(() => {});
+          });
         }
 
         if (!Array.isArray(dataRows)) {
@@ -1569,7 +1575,7 @@ const pageService = {
           actionType,
           sourceType: source_type,
           dataSource: data_source
-          }).catch(() => {});
+          });
         }
         
         data = Array.isArray(dataRows) ? dataRows : [];
@@ -1634,7 +1640,7 @@ const pageService = {
           actionType,
           sourceType: source_type,
           dataSource: data_source
-          }).catch(() => {});
+          });
         }
 
         data = Array.isArray(dataRows) ? dataRows : [];
@@ -1778,8 +1784,6 @@ const pageService = {
               actionType: 'page_data_download',
               sourceType: source_type,
               dataSource: data_source
-            }).catch(() => {
-              // Ignore audit logging errors
             });
           }
 
