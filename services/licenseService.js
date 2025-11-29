@@ -42,6 +42,13 @@ class LicenseService {
       instanceId = null
     } = options;
 
+    // Validate organization exists
+    const { Organization } = require('../models/Organization');
+    const organization = await Organization.findByPk(organizationId);
+    if (!organization) {
+      throw fromCode('NOT_FOUND', ['Organization not found']);
+    }
+
     // Check if license already exists
     const existing = await License.findOne({
       where: { organization_id: organizationId }
@@ -194,30 +201,36 @@ class LicenseService {
     }
 
     if (checkType === 'users' && license.max_users !== null) {
+      // Check if current count is already at or exceeds limit
+      // We check BEFORE creation, so if currentCount is 10 and limit is 10, we should block
       const allowed = currentCount < license.max_users;
+      const remaining = Math.max(0, license.max_users - currentCount);
       return {
         allowed,
         limit: license.max_users,
         current: currentCount,
-        remaining: Math.max(0, license.max_users - currentCount),
+        remaining,
         reason: allowed ? null : 'USER_LIMIT_EXCEEDED',
         message: allowed 
-          ? `Users: ${currentCount}/${license.max_users}`
-          : `User limit exceeded: ${currentCount}/${license.max_users}`
+          ? `Users: ${currentCount}/${license.max_users} (${remaining} remaining)`
+          : `User limit exceeded: ${currentCount}/${license.max_users}. Please upgrade your license.`
       };
     }
 
     if (checkType === 'tenants' && license.max_tenants !== null) {
+      // Check if current count is already at or exceeds limit
+      // We check BEFORE creation, so if currentCount is 5 and limit is 5, we should block
       const allowed = currentCount < license.max_tenants;
+      const remaining = Math.max(0, license.max_tenants - currentCount);
       return {
         allowed,
         limit: license.max_tenants,
         current: currentCount,
-        remaining: Math.max(0, license.max_tenants - currentCount),
+        remaining,
         reason: allowed ? null : 'TENANT_LIMIT_EXCEEDED',
         message: allowed
-          ? `Tenants: ${currentCount}/${license.max_tenants}`
-          : `Tenant limit exceeded: ${currentCount}/${license.max_tenants}`
+          ? `Tenants: ${currentCount}/${license.max_tenants} (${remaining} remaining)`
+          : `Tenant limit exceeded: ${currentCount}/${license.max_tenants}. Please upgrade your license.`
       };
     }
 
@@ -263,6 +276,10 @@ class LicenseService {
     updateData.updated_at = new Date();
 
     await license.update(updateData);
+
+    // Clear license cache to reflect changes immediately
+    const { clearLicenseCache } = require('../middleware/licenseMiddleware');
+    clearLicenseCache(organizationId);
 
     logger.info('License updated', {
       organizationId,

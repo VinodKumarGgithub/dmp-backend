@@ -53,6 +53,7 @@ const ERROR_CATALOG = {
   LICENSE_INVALID: { message: 'Your license is invalid or has expired. Please contact support to renew your license.', status: 403 },
   LICENSE_VALIDATION_ERROR: { message: 'Failed to validate license. Please contact support.', status: 500 },
   LICENSE_RESTRICTED: { message: 'This action requires an active license. Your license may have expired.', status: 403 },
+  LICENSE_LIMIT_EXCEEDED: { message: 'You have reached the maximum limit allowed by your license. Please upgrade your license to continue.', status: 403 },
   FEATURE_NOT_AVAILABLE: { message: 'This feature is not available with your current license. Please upgrade to access this feature.', status: 403 },
 };
 

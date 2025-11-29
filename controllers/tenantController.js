@@ -177,6 +177,38 @@ module.exports = {
       if (!Array.isArray(tenants) || tenants.length === 0) {
         return res.status(400).json(error("Tenants array is required and must not be empty"));
       }
+
+      // Check license limits for bulk creation (before creating any tenants)
+      // Skip for SUPER_ADMIN
+      const { isSuperAdmin } = require('../middleware/roleMiddleware');
+      const { fromCode } = require('../utils/errors');
+      
+      if (!isSuperAdmin(req.user)) {
+        const organizationId = tenants[0]?.organization_id || req.user?.organization_id;
+        if (organizationId) {
+          const { Tenant } = require('../models/Tenant');
+          const licenseService = require('../services/licenseService');
+          
+          // Count current tenants for this organization
+          const currentCount = await Tenant.count({
+            where: { organization_id: organizationId }
+          });
+
+          // Check if adding all tenants would exceed limit
+          const totalAfterCreation = currentCount + tenants.length;
+          const limitCheck = await licenseService.checkLicenseLimits(
+            organizationId,
+            'tenants',
+            totalAfterCreation - 1 // Check before creation (currentCount + newCount - 1)
+          );
+
+          if (!limitCheck.allowed) {
+            return next(fromCode('LICENSE_LIMIT_EXCEEDED', [
+              `Cannot create ${tenants.length} tenant(s). Would exceed limit: ${totalAfterCreation}/${limitCheck.limit}. Current: ${currentCount}/${limitCheck.limit}. Please upgrade your license.`
+            ]));
+          }
+        }
+      }
       
       const createdTenants = await tenantService.bulkCreateTenants(masterSequelize, tenants);
       const response = success(createdTenants, `${createdTenants.length} tenants created successfully!`);

@@ -89,7 +89,16 @@ async function updateLicense(req, res, next) {
       return next(fromCode('VALIDATION_ERROR', ['organizationId is required']));
     }
 
-    const license = await licenseService.updateLicense(organizationId, updates);
+    // Convert camelCase to snake_case for database fields
+    const dbUpdates = {};
+    if (updates.maxUsers !== undefined) dbUpdates.max_users = updates.maxUsers === -1 ? null : updates.maxUsers;
+    if (updates.maxTenants !== undefined) dbUpdates.max_tenants = updates.maxTenants === -1 ? null : updates.maxTenants;
+    if (updates.expiresAt !== undefined) dbUpdates.expires_at = updates.expiresAt;
+    if (updates.instanceId !== undefined) dbUpdates.instance_id = updates.instanceId;
+    if (updates.status !== undefined) dbUpdates.status = updates.status;
+    if (updates.features !== undefined) dbUpdates.features = updates.features;
+
+    const license = await licenseService.updateLicense(organizationId, dbUpdates);
 
     res.json({
       id: license.id,
@@ -224,6 +233,49 @@ async function getLicenseFeatures(req, res, next) {
   }
 }
 
+/**
+ * List all licenses (SUPER_ADMIN only)
+ */
+async function listLicenses(req, res, next) {
+  try {
+    const { search, status } = req.query;
+    const { License } = require('../models/License');
+    const { Op } = require('sequelize');
+    
+    const where = {};
+    if (status) where.status = status;
+    if (search) {
+      where[Op.or] = [
+        { organization_id: { [Op.like]: `%${search}%` } },
+        { license_key: { [Op.like]: `%${search}%` } },
+      ];
+    }
+    
+    const licenses = await License.findAll({ 
+      where, 
+      order: [['created_at', 'DESC']] 
+    });
+    
+    res.json({
+      data: licenses.map(license => ({
+        id: license.id,
+        organizationId: license.organization_id,
+        licenseKey: license.license_key,
+        expiresAt: license.expires_at,
+        maxUsers: license.max_users,
+        maxTenants: license.max_tenants,
+        features: license.features || [],
+        status: license.status,
+        instanceId: license.instance_id,
+        createdAt: license.created_at,
+        updatedAt: license.updated_at,
+      }))
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
 module.exports = {
   getLicenseStatus,
   getLicenseFeatures,
@@ -231,6 +283,7 @@ module.exports = {
   updateLicense,
   renewLicense,
   getLicenseByOrganization,
-  checkLicenseLimits
+  checkLicenseLimits,
+  listLicenses
 };
 

@@ -61,9 +61,33 @@ async function requireAdmin(req, res, next) {
   }
 }
 
+/**
+ * Middleware to require SUPER_ADMIN role only
+ * For super-admin-only features like license management
+ */
+async function requireSuperAdmin(req, res, next) {
+  try {
+    if (!req.user || req.user.role !== 'SUPER_ADMIN') {
+      return next(fromCode('FORBIDDEN', ['This action requires SUPER_ADMIN role']));
+    }
+
+    // Verify user still exists in DB
+    const { AdminUser } = require('../models/AdminUser');
+    const admin = await AdminUser.findOne({ where: { username: req.user.username } });
+    if (!admin) {
+      return next(fromCode('FORBIDDEN'));
+    }
+
+    next();
+  } catch (err) {
+    return next(fromCode('AUTHFAILED'));
+  }
+}
+
 module.exports = { 
   requireAdminOrDeveloper, 
   requireAdmin,
+  requireSuperAdmin,
   isSuperAdmin,
   canAccessOrganization
 };

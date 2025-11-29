@@ -1,6 +1,7 @@
 const express = require('express');
 const { authMiddleware } = require('../middleware/authMiddleware');
 const { requireAdmin } = require('../middleware/roleMiddleware');
+const { checkUserLimit } = require('../middleware/licenseLimitMiddleware');
 const {
   listUsers,
   createUser,
@@ -17,7 +18,7 @@ router.use(requireAdmin);
 
 router.get('/', listUsers);
 router.get('/:id', getUserById);
-router.post('/', createUser);
+router.post('/', checkUserLimit, createUser);
 router.put('/:id', updateUser);
 router.delete('/:id', deleteUser);
 

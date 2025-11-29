@@ -115,6 +115,10 @@ const tenantService = {
       const updatedTenant = await tenant.update(data, { transaction: txn });
       await txn.commit();
       
+      // Clear tenant cache since credentials or status may have changed
+      const { clearTenantCache } = require('../config/tenantDbManager');
+      clearTenantCache(tenantId);
+      
       // Security: Remove password from response
       const tenantResponse = updatedTenant.toJSON ? updatedTenant.toJSON() : updatedTenant;
       delete tenantResponse.db_password;
@@ -139,6 +143,11 @@ const tenantService = {
 
       await tenant.destroy({ transaction: txn });
       await txn.commit();
+      
+      // Clear tenant cache since tenant is deleted
+      const { clearTenantCache } = require('../config/tenantDbManager');
+      clearTenantCache(tenantId);
+      
       return { message: 'Tenant deleted successfully' };
     } catch (error) {
       await txn.rollback();

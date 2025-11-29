@@ -40,12 +40,12 @@ async function getTenantSequelize(tenantId) {
   const url = `${tenant.dialect}://${encodedUser}:${encodedPassword}@${tenant.db_host}:${tenant.db_port}/${tenant.db_name}`;
   const sequelize = createSequelize(url);
   
-  try {
+    try {
     await sequelize.authenticate();
     logger.info(`Connection established for Tenant ${tenantId}`);
-  } catch (error) {
+    } catch (error) {
     throw fromCode('DB_CONNECTION_FAILED', [`Unable to connect to tenant ${tenantId}: ${error.message}`]);
-  }
+    }
 
   // Security: Clear password from tenant object after use (don't keep in memory)
   // Note: This doesn't affect the database record, only the in-memory object
@@ -58,7 +58,37 @@ async function getTenantSequelize(tenantId) {
   return sequelize;
 }
 
+/**
+ * Clear tenant cache for a specific tenant
+ * Closes the connection and removes from cache
+ * @param {string} tenantId - Tenant ID to clear from cache
+ */
+function clearTenantCache(tenantId) {
+  if (tenantCache.has(tenantId)) {
+    const sequelize = tenantCache.get(tenantId);
+    // Close the connection if it exists
+    if (sequelize && typeof sequelize.close === 'function') {
+      sequelize.close().catch(err => {
+        logger.warn(`Error closing tenant connection for ${tenantId}:`, err.message);
+      });
+    }
+    tenantCache.delete(tenantId);
+    logger.info(`Tenant cache cleared for ${tenantId}`);
+  }
+}
 
-module.exports = { getTenantId, getTenantSequelize };
+/**
+ * Clear all tenant caches
+ * Useful for cleanup or when all connections need to be refreshed
+ */
+function clearAllTenantCache() {
+  const tenantIds = Array.from(tenantCache.keys());
+  tenantIds.forEach(tenantId => {
+    clearTenantCache(tenantId);
+  });
+  logger.info(`Cleared all tenant caches (${tenantIds.length} tenants)`);
+}
+
+module.exports = { getTenantId, getTenantSequelize, clearTenantCache, clearAllTenantCache };
 
 

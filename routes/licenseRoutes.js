@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { authMiddleware } = require('../middleware/authMiddleware');
-const { requireAdmin } = require('../middleware/roleMiddleware');
+const { requireAdmin, requireSuperAdmin } = require('../middleware/roleMiddleware');
 const { checkLicense } = require('../middleware/licenseMiddleware');
 const licenseController = require('../controllers/licenseController');
 
@@ -27,32 +27,39 @@ router.get('/features', authMiddleware, checkLicense, licenseController.getLicen
 router.get('/limits', authMiddleware, checkLicense, licenseController.checkLicenseLimits);
 
 /**
+ * GET /api/license
+ * List all licenses
+ * Requires: SUPER_ADMIN
+ */
+router.get('/', authMiddleware, requireSuperAdmin, licenseController.listLicenses);
+
+/**
  * POST /api/license
  * Create new license
  * Requires: SUPER_ADMIN
  */
-router.post('/', authMiddleware, requireAdmin, licenseController.createLicense);
+router.post('/', authMiddleware, requireSuperAdmin, licenseController.createLicense);
 
 /**
  * GET /api/license/organization/:organizationId
  * Get license for specific organization
  * Requires: SUPER_ADMIN
  */
-router.get('/organization/:organizationId', authMiddleware, requireAdmin, licenseController.getLicenseByOrganization);
+router.get('/organization/:organizationId', authMiddleware, requireSuperAdmin, licenseController.getLicenseByOrganization);
 
 /**
  * PUT /api/license/organization/:organizationId
  * Update license
  * Requires: SUPER_ADMIN
  */
-router.put('/organization/:organizationId', authMiddleware, requireAdmin, licenseController.updateLicense);
+router.put('/organization/:organizationId', authMiddleware, requireSuperAdmin, licenseController.updateLicense);
 
 /**
  * POST /api/license/organization/:organizationId/renew
  * Renew license (extend expiration)
  * Requires: SUPER_ADMIN
  */
-router.post('/organization/:organizationId/renew', authMiddleware, requireAdmin, licenseController.renewLicense);
+router.post('/organization/:organizationId/renew', authMiddleware, requireSuperAdmin, licenseController.renewLicense);
 
 module.exports = router;
 
