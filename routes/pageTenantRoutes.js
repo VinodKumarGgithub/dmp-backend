@@ -1,6 +1,7 @@
 const express = require('express');
 const { authMiddleware } = require('../middleware/authMiddleware');
 const { queryRateLimiter } = require('../middleware/queryRateLimiter');
+const { requireActiveLicense } = require('../middleware/featureGateMiddleware');
 const {
   getPageData,
   getPageConfigAndData,
@@ -27,12 +28,16 @@ router.get('/db/tables/:tableName/columns', getTableColumns);
 router.get('/db/tables/:tableName/indexes', getTableIndexes);
 router.get('/db/procedures/:procedureName/parameters', getProcedureParameters);
 
-// Page data routes
+// Page data routes (read operations - no license check needed)
 router.get('/:pageKey', getPageConfigAndData);
 router.get('/:pageKey/data', getPageData);
-router.get('/:pageKey/download', downloadPageData);
-router.post('/:pageKey/test-query', testQuery);
-router.post('/:pageKey/detect-columns', detectColumns);
+
+// Export/download - require active license
+router.get('/:pageKey/download', requireActiveLicense('export'), downloadPageData);
+
+// Write operations - require active license
+router.post('/:pageKey/test-query', requireActiveLicense('create'), testQuery);
+router.post('/:pageKey/detect-columns', requireActiveLicense('create'), detectColumns);
 
 module.exports = router;
 

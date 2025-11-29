@@ -20,7 +20,12 @@ module.exports = {
       }
       
       const tenant = await tenantService.createTenant(masterSequelize, req.body);
-      const response = success(tenant, "Tenant created successfully!");
+      
+      // Security: Remove password from response
+      const tenantResponse = tenant.toJSON ? tenant.toJSON() : tenant;
+      delete tenantResponse.db_password;
+      
+      const response = success(tenantResponse, "Tenant created successfully!");
       res.status(201).json(response);
     } catch (err) {
       next(err);
@@ -50,7 +55,15 @@ module.exports = {
       // SUPER_ADMIN without filter: sees all tenants
       
       const tenants = await tenantService.listTenants(masterSequelize, filters);
-      const response = success(tenants, "Tenants fetched successfully!");
+      
+      // Security: Remove passwords from all tenant responses
+      const tenantsResponse = tenants.map(tenant => {
+        const tenantObj = tenant.toJSON ? tenant.toJSON() : tenant;
+        delete tenantObj.db_password;
+        return tenantObj;
+      });
+      
+      const response = success(tenantsResponse, "Tenants fetched successfully!");
       res.json(response);
     } catch (err) {
       next(err);
@@ -70,7 +83,11 @@ module.exports = {
         }
       }
       
-      const response = success(tenant, "Tenant fetched successfully!");
+      // Security: Remove password from response
+      const tenantResponse = tenant.toJSON ? tenant.toJSON() : tenant;
+      delete tenantResponse.db_password;
+      
+      const response = success(tenantResponse, "Tenant fetched successfully!");
       res.json(response);
     } catch (err) {
       next(err);
@@ -95,7 +112,12 @@ module.exports = {
       }
       
       const tenant = await tenantService.updateTenant(masterSequelize, id, req.body);
-      const response = success(tenant, "Tenant updated successfully!");
+      
+      // Security: Remove password from response
+      const tenantResponse = tenant.toJSON ? tenant.toJSON() : tenant;
+      delete tenantResponse.db_password;
+      
+      const response = success(tenantResponse, "Tenant updated successfully!");
       res.json(response);
     } catch (err) {
       next(err);

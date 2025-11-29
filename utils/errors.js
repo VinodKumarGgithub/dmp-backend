@@ -17,6 +17,8 @@ const ERROR_CATALOG = {
   // Tenant Related
   TENANT_NOT_FOUND: { message: 'The specified tenant was not found.', status: 404 },
   TENANT_DB_NOT_AVAILABLE: { message: 'The database for this tenant is currently unavailable. Please try again later or contact support.', status: 502 },
+  TENANT_INACTIVE: { message: 'This tenant is currently INACTIVE. Please activate the tenant to connect to its database.', status: 403 },
+  TENANT_SUSPENDED: { message: 'This tenant is currently SUSPENDED. Database access is temporarily disabled. Please contact support if you need access.', status: 403 },
   
   // Database Connection & Configuration
   DB_CONNECTION_FAILED: { message: 'Unable to connect to the database. This may be a temporary issue. Please try again in a few moments.', status: 502 },
@@ -46,6 +48,12 @@ const ERROR_CATALOG = {
   UNSUPPORTED_DIALECT: { message: 'The database type is not supported. Please contact support.', status: 400 },
   USER_BLOCKED: { message: 'Your account has been blocked. Please contact your administrator.', status: 403 },
   DANGEROUS_SQL_DETECTED: { message: 'The query contains potentially dangerous operations and has been blocked for security reasons.', status: 403 },
+  
+  // License Related
+  LICENSE_INVALID: { message: 'Your license is invalid or has expired. Please contact support to renew your license.', status: 403 },
+  LICENSE_VALIDATION_ERROR: { message: 'Failed to validate license. Please contact support.', status: 500 },
+  LICENSE_RESTRICTED: { message: 'This action requires an active license. Your license may have expired.', status: 403 },
+  FEATURE_NOT_AVAILABLE: { message: 'This feature is not available with your current license. Please upgrade to access this feature.', status: 403 },
 };
 
 function createError(code, message, status, details) {

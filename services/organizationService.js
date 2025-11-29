@@ -322,6 +322,24 @@ async function createOrganization(data) {
     
     const newOrg = await Organization.create(orgData);
     
+    // Auto-create license for new organization (if license service is available)
+    // This ensures new organizations have a license by default
+    try {
+      const licenseService = require('./licenseService');
+      const defaultExpiresInDays = parseInt(process.env.DEFAULT_LICENSE_EXPIRES_DAYS || '365', 10);
+      
+      await licenseService.createLicense(newOrg.id, {
+        expiresInDays: defaultExpiresInDays,
+        maxUsers: null, // Unlimited by default
+        maxTenants: null, // Unlimited by default
+        features: [] // No features by default
+      });
+    } catch (licenseError) {
+      // Don't fail organization creation if license creation fails
+      // License can be created manually later
+      console.warn(`Warning: Failed to auto-create license for organization ${newOrg.id}:`, licenseError.message);
+    }
+    
     return getOrganizationById(newOrg.id);
   } catch (error) {
     if (error.code) throw error;

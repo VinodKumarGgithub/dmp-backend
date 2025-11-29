@@ -30,9 +30,15 @@ const tenantService = {
     const txn = await masterDb.transaction();
     
     try {
+      // Password will be encrypted automatically by Tenant model hook
       const tenant = await masterDb.models.tenant.create(data, { transaction: txn });
       await txn.commit();
-      return tenant;
+      
+      // Security: Remove password from response
+      const tenantResponse = tenant.toJSON ? tenant.toJSON() : tenant;
+      delete tenantResponse.db_password;
+      
+      return tenantResponse;
     } catch (error) {
       await txn.rollback();
       throw mapDbError(error);
@@ -71,7 +77,12 @@ const tenantService = {
     if (!tenant) {
       throw fromCode('TENANT_NOT_FOUND');
     }
-    return tenant;
+    
+    // Security: Remove password from response
+    const tenantResponse = tenant.toJSON ? tenant.toJSON() : tenant;
+    delete tenantResponse.db_password;
+    
+    return tenantResponse;
   },
 
   // Update tenant
@@ -100,9 +111,15 @@ const tenantService = {
         throw fromCode('TENANT_NOT_FOUND');
       }
 
+      // Password will be encrypted automatically by Tenant model hook if changed
       const updatedTenant = await tenant.update(data, { transaction: txn });
       await txn.commit();
-      return updatedTenant;
+      
+      // Security: Remove password from response
+      const tenantResponse = updatedTenant.toJSON ? updatedTenant.toJSON() : updatedTenant;
+      delete tenantResponse.db_password;
+      
+      return tenantResponse;
     } catch (error) {
       await txn.rollback();
       throw error;
@@ -131,15 +148,60 @@ const tenantService = {
 
   // Test tenant database connection
   async testTenantConnection(masterDb, tenantId) {
-    const tenant = await this.getTenantById(masterDb, tenantId);
+    // Fetch tenant directly to get decrypted password (bypass getTenantById which removes it)
+    const tenant = await masterDb.models.tenant.findByPk(tenantId);
+    if (!tenant) {
+      throw fromCode('TENANT_NOT_FOUND');
+    }
     
+    // Check tenant status - provide specific feedback
+    if (tenant.status === 'INACTIVE') {
+      return {
+        success: false,
+        message: 'This tenant is currently INACTIVE. Please activate the tenant to connect to its database.',
+        error: 'TENANT_INACTIVE',
+        tenant: tenant.id,
+        status: tenant.status
+      };
+    }
+    
+    if (tenant.status === 'SUSPENDED') {
+      return {
+        success: false,
+        message: 'This tenant is currently SUSPENDED. Database access is temporarily disabled. Please contact support if you need access.',
+        error: 'TENANT_SUSPENDED',
+        tenant: tenant.id,
+        status: tenant.status
+      };
+    }
+    
+    if (tenant.status !== 'ACTIVE') {
+      return {
+        success: false,
+        message: `This tenant status is ${tenant.status}. Only ACTIVE tenants can connect.`,
+        error: 'TENANT_DB_NOT_AVAILABLE',
+        tenant: tenant.id,
+        status: tenant.status
+      };
+    }
+    
+    // Password is automatically decrypted by Tenant model hook (afterFind)
     try {
       const { createSequelize } = require('../config/db');
-      const connectionString = `${tenant.dialect}://${tenant.db_user}:${tenant.db_password}@${tenant.db_host}:${tenant.db_port}/${tenant.db_name}`;
+      // URL encode password and username to handle special characters
+      const encodedPassword = encodeURIComponent(tenant.db_password);
+      const encodedUser = encodeURIComponent(tenant.db_user);
+      const connectionString = `${tenant.dialect}://${encodedUser}:${encodedPassword}@${tenant.db_host}:${tenant.db_port}/${tenant.db_name}`;
       
       const testDb = createSequelize(connectionString);
       await testDb.authenticate();
       await testDb.close();
+      
+      // Security: Clear password from memory after use
+      if (tenant.dataValues) {
+        tenant.dataValues.db_password = '[REDACTED]';
+      }
+      tenant.db_password = '[REDACTED]';
       
       return { 
         success: true, 
@@ -147,6 +209,12 @@ const tenantService = {
         tenant: tenant.id
       };
     } catch (error) {
+      // Security: Clear password from memory even on error
+      if (tenant.dataValues) {
+        tenant.dataValues.db_password = '[REDACTED]';
+      }
+      tenant.db_password = '[REDACTED]';
+      
       return { 
         success: false, 
         message: 'Database connection failed',
