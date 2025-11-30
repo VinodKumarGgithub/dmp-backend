@@ -4,6 +4,7 @@ const { PageConfig } = require('../models/PageConfig');
 const { dbMetadataService } = require('./dbMetadataService');
 const { validateProcedureSql } = require('../utils/sqlSecurity');
 const { Op } = require('sequelize');
+const UsageTrackingService = require('./usageTrackingService');
 const crypto = require('crypto');
 const LOG_ENCRYPTION_KEY = process.env.LOG_ENCRYPTION_KEY || '';
 const getEncryptionKey = () => {
@@ -645,6 +646,40 @@ function logQueryExecution(auditData) {
       };
 
       await QueryAuditLog.create(logEntry);
+      
+      // Also track to ClickHouse for analytics (fire-and-forget, non-blocking)
+      if (auditData.organizationId) {
+        // Determine metric type based on action type
+        let metricType = 'query';
+        if (auditData.actionType === 'page_data_download') {
+          metricType = 'export';
+        } else if (auditData.actionType === 'data_query' || auditData.actionType === 'page_data_fetch') {
+          metricType = 'page_view'; // Regular page data fetch
+        }
+        
+        // Track to ClickHouse (fire-and-forget, won't block)
+        UsageTrackingService.trackMetric({
+          organizationId: auditData.organizationId,
+          tenantId: auditData.tenantId,
+          userId: auditData.userId,
+          metricType: metricType,
+          pageKey: auditData.pageKey,
+          actionType: resolvedActionType,
+          sourceType: auditData.sourceType,
+          dataSource: auditData.dataSource,
+          executionTimeMs: auditData.executionTime,
+          rowsReturned: auditData.rowsReturned || 0,
+          success: auditData.success !== false,
+          errorCode: resolvedErrorCode,
+          ipAddress: auditData.ipAddress,
+          metadata: {
+            queryParams: auditData.queryParams
+          }
+        }).catch(() => {
+          // Silently fail - tracking shouldn't break main flow
+          // UsageTrackingService already handles errors internally
+        });
+      }
     } catch (error) {
       // Don't throw - audit logging failures shouldn't break the main flow
       // Only log in dev mode to avoid production noise
@@ -2607,16 +2642,22 @@ const pageService = {
         }
 
         // Execute procedure
-        let dataRows;
+        const startTime = Date.now();
+        let executionSuccess = true;
+        let errorMessage = null;
+        let dataRows = [];
+        
         try {
           dataRows = await tenantSequelize.query(procedureCall, {
             replacements: procedureReplacements,
             type: tenantSequelize.QueryTypes.SELECT
           });
         } catch (queryError) {
+          executionSuccess = false;
+          errorMessage = queryError.message || String(queryError);
+          
           // Check for procedure not found errors
           const errorCode = queryError.original?.code || queryError.parent?.code || '';
-          const errorMessage = queryError.message || String(queryError);
           const lowerMessage = errorMessage.toLowerCase();
           
           // MySQL: ER_SP_DOES_NOT_EXIST (1305) or messages containing "procedure" and "does not exist"
@@ -2637,6 +2678,24 @@ const pageService = {
           }
           
           throw queryError;
+        } finally {
+          const executionTime = Date.now() - startTime;
+          logQueryExecution({
+            organizationId: reqDb.organizationId,
+            pageKey: config.page_key,
+            tenantId: reqDb.tenantId,
+            userId: auditContext.userId,
+            ipAddress: auditContext.ipAddress,
+            sqlText: procedureCall,
+            executionTime,
+            rowsReturned: Array.isArray(dataRows) ? dataRows.length : 0,
+            success: executionSuccess,
+            errorMessage,
+            queryParams: Object.keys(queryParams).length > 0 ? { ...queryParams, exportFormat: auditContext.exportFormat || 'csv' } : { exportFormat: auditContext.exportFormat || 'csv' },
+            actionType: 'page_data_download',
+            sourceType: source_type,
+            dataSource: data_source
+          });
         }
 
         if (!Array.isArray(dataRows)) {
@@ -2728,9 +2787,39 @@ const pageService = {
       // Fetch all data without WHERE clause (will filter in-memory)
       const escapedDataSource = escapeIdentifier(tenantSequelize, data_source);
       const dataSql = `SELECT * FROM ${escapedDataSource}`;
-      const dataRows = await tenantSequelize.query(dataSql, {
-        type: tenantSequelize.QueryTypes.SELECT
-      });
+      
+      const startTime = Date.now();
+      let executionSuccess = true;
+      let errorMessage = null;
+      let dataRows = [];
+      
+      try {
+        dataRows = await tenantSequelize.query(dataSql, {
+          type: tenantSequelize.QueryTypes.SELECT
+        });
+      } catch (queryError) {
+        executionSuccess = false;
+        errorMessage = queryError.message || String(queryError);
+        throw queryError;
+      } finally {
+        const executionTime = Date.now() - startTime;
+        logQueryExecution({
+          organizationId: reqDb.organizationId,
+          pageKey: config.page_key,
+          tenantId: reqDb.tenantId,
+          userId: auditContext.userId,
+          ipAddress: auditContext.ipAddress,
+          sqlText: dataSql,
+          executionTime,
+          rowsReturned: Array.isArray(dataRows) ? dataRows.length : 0,
+          success: executionSuccess,
+          errorMessage,
+          queryParams: Object.keys(queryParams).length > 0 ? { ...queryParams, exportFormat: auditContext.exportFormat || 'csv' } : { exportFormat: auditContext.exportFormat || 'csv' },
+          actionType: 'page_data_download',
+          sourceType: source_type,
+          dataSource: data_source
+        });
+      }
       
       if (!Array.isArray(dataRows)) {
         return { data: [] };
@@ -2786,12 +2875,41 @@ const pageService = {
       }
       const dataSql = `SELECT ${selectPrefix}${selectColumns} FROM ${queryDataSource} ${whereClause} ${orderBy}${limitSuffix}`;
 
-      // Execute query using req.db.sequelize.query to get all data
-      // Sequelize query returns [results, metadata], so we destructure to get the results
-      const dataRows = await tenantSequelize.query(dataSql, {
-        replacements,
-        type: tenantSequelize.QueryTypes.SELECT
-      });
+      const startTime = Date.now();
+      let executionSuccess = true;
+      let errorMessage = null;
+      let dataRows = [];
+      
+      try {
+        // Execute query using req.db.sequelize.query to get all data
+        // Sequelize query returns [results, metadata], so we destructure to get the results
+        dataRows = await tenantSequelize.query(dataSql, {
+          replacements,
+          type: tenantSequelize.QueryTypes.SELECT
+        });
+      } catch (queryError) {
+        executionSuccess = false;
+        errorMessage = queryError.message || String(queryError);
+        throw queryError;
+      } finally {
+        const executionTime = Date.now() - startTime;
+        logQueryExecution({
+          organizationId: reqDb.organizationId,
+          pageKey: config.page_key,
+          tenantId: reqDb.tenantId,
+          userId: auditContext.userId,
+          ipAddress: auditContext.ipAddress,
+          sqlText: dataSql,
+          executionTime,
+          rowsReturned: Array.isArray(dataRows) ? dataRows.length : 0,
+          success: executionSuccess,
+          errorMessage,
+          queryParams: Object.keys(queryParams).length > 0 ? { ...queryParams, exportFormat: auditContext.exportFormat || 'csv' } : { exportFormat: auditContext.exportFormat || 'csv' },
+          actionType: 'page_data_download',
+          sourceType: source_type,
+          dataSource: data_source
+        });
+      }
 
       // dataRows is already an array of row objects
       let data = Array.isArray(dataRows) ? dataRows : [];

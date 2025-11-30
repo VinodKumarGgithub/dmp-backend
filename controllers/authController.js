@@ -3,6 +3,7 @@ const jwt = require('jsonwebtoken');
 const { AdminUser } = require('../models/AdminUser');
 const { fromCode } = require('../utils/errors');
 const { getOrganizationById } = require('../services/organizationService');
+const UsageTrackingService = require('../services/usageTrackingService');
 
 async function login(req, res, next) {
   try {
@@ -83,6 +84,19 @@ async function login(req, res, next) {
         // Don't throw - allow login to proceed without branding
         // The error is caught and logged, but login continues successfully
       }
+    }
+
+    // Track login to ClickHouse (fire-and-forget, non-blocking)
+    if (user.organization_id) {
+      UsageTrackingService.trackMetric({
+        organizationId: user.organization_id,
+        userId: user.id,
+        metricType: 'login',
+        success: true,
+        ipAddress: req.ip || req.headers['x-forwarded-for'] || req.connection.remoteAddress
+      }).catch(() => {
+        // Silently fail - tracking shouldn't break login flow
+      });
     }
 
     return res.json({ success: true, data: responseData });
