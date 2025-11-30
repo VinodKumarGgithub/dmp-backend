@@ -358,11 +358,11 @@ module.exports = {
           config.source_params.push({ name: 'custom_query', value: custom_query });
         }
       } else {
-        const pSqlIndex = config.source_params.findIndex(p => p && p.name === 'p_sql');
-        if (pSqlIndex >= 0) {
-          config.source_params[pSqlIndex].value = p_sql;
-        } else {
-          config.source_params.push({ name: 'p_sql', value: p_sql });
+      const pSqlIndex = config.source_params.findIndex(p => p && p.name === 'p_sql');
+      if (pSqlIndex >= 0) {
+        config.source_params[pSqlIndex].value = p_sql;
+      } else {
+        config.source_params.push({ name: 'p_sql', value: p_sql });
         }
       }
 
@@ -417,19 +417,19 @@ module.exports = {
           data = Array.isArray(result) ? result : [];
         } else {
           // Existing PROCEDURE logic
-          const procedureQuery = await pageService.buildProcedureSql(
-            config,
-            queryParams,
-            req.db.sequelize,
-            { pagination: true, limitOverride: 1 },
-            p_sql
-          );
-          previewSql = procedureQuery.sql;
-          const result = await req.db.sequelize.query(procedureQuery.sql, {
-            replacements: procedureQuery.replacements,
-            type: req.db.sequelize.QueryTypes.SELECT,
-            timeout: 30000
-          });
+        const procedureQuery = await pageService.buildProcedureSql(
+          config,
+          queryParams,
+          req.db.sequelize,
+          { pagination: true, limitOverride: 1 },
+          p_sql
+        );
+        previewSql = procedureQuery.sql;
+        const result = await req.db.sequelize.query(procedureQuery.sql, {
+          replacements: procedureQuery.replacements,
+          type: req.db.sequelize.QueryTypes.SELECT,
+          timeout: 30000
+        });
           data = Array.isArray(result) ? result : [];
         }
 

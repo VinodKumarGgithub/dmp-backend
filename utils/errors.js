@@ -40,7 +40,7 @@ const ERROR_CATALOG = {
   PAGE_NO_DATA_TO_DOWNLOAD: { message: 'No data is available to download.', status: 404 },
   PAGE_DATA_SOURCE_INVALID: { message: 'The data source for this page does not exist or is invalid. Please check your page configuration.', status: 400 },
   PAGE_CONFIG_INVALID: { message: 'The page configuration is invalid or corrupted. Please check your settings.', status: 400 },
-  PAGE_QUERY_ERROR: { message: 'An error occurred while executing the page query. Please verify your query configuration and try again.', status: 400 },
+  PAGE_QUERY_ERROR: { message: 'Unable to load data. This may be due to invalid filters, search terms, or a database issue. Please check your filters and try again.', status: 400 },
   
   // System & Security
   INTERNAL_ERROR: { message: 'An unexpected error occurred. Please try again or contact support if the problem persists.', status: 500 },

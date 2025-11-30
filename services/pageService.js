@@ -48,6 +48,37 @@ function escapeIdentifier(sequelize, identifier) {
   return segments.map(wrapSegment).join('.');
 }
 
+/**
+ * Validate date value and return error if invalid
+ */
+function validateDateValue(value, fieldName, fieldLabel) {
+  if (!value || value === '') {
+    return null; // Empty values are allowed (will be skipped)
+  }
+  
+  const dateStr = String(value).trim();
+  
+  // Check if it's a valid date format (ISO format: YYYY-MM-DD or YYYY-MM-DD HH:mm:ss)
+  const isoDateRegex = /^\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2}:\d{2})?$/;
+  if (!isoDateRegex.test(dateStr)) {
+    throw fromCode('VALIDATION_ERROR', [
+      `Invalid date format for filter "${fieldLabel || fieldName}". Expected format: YYYY-MM-DD (e.g., 2024-01-15) or YYYY-MM-DD HH:mm:ss (e.g., 2024-01-15 14:30:00)`,
+      `Received: "${dateStr}"`
+    ]);
+  }
+  
+  // Try to parse the date to ensure it's valid
+  const parsedDate = new Date(dateStr);
+  if (isNaN(parsedDate.getTime())) {
+    throw fromCode('VALIDATION_ERROR', [
+      `Invalid date value for filter "${fieldLabel || fieldName}". The date "${dateStr}" is not a valid date.`,
+      `Please use format: YYYY-MM-DD (e.g., 2024-01-15)`
+    ]);
+  }
+  
+  return dateStr;
+}
+
 function parsePositiveInt(value) {
   if (value === null || value === undefined) {
     return null;
@@ -932,10 +963,194 @@ const pageService = {
         }
 
         const value = queryParams[f.name];
-        if (value === undefined || value === null || value === '') return;
+        const operator = (f.operator || 'default').toUpperCase(); // Get operator from config, default to 'default'
+        
+        // Handle null/empty values based on operator
+        const isNullOperator = operator === 'IS NULL' || operator === 'IS NOT NULL' || operator === 'IS_NULL' || operator === 'IS_NOT_NULL';
+        
+        if (value === undefined || value === null || value === '') {
+          // For IS NULL and IS NOT NULL, we still need to process (value will be set to 'true' by frontend)
+          if (isNullOperator) {
+            // Process these operators below - frontend sends 'true' to activate
+          } else {
+            return; // Skip other operators if value is empty
+          }
+        }
 
         const paramKey = createParamKey('f_', f.name);
         const escapedField = sequelize ? escapeIdentifier(sequelize, f.name) : f.name;
+        
+        // Handle operators
+        switch (operator.toUpperCase()) {
+          case '=':
+          case 'EQUALS':
+            // Validate date if field type is date/datetime
+            if (f.type === 'date' || f.type === 'datetime') {
+              const validatedValue = validateDateValue(value, f.name, f.label);
+              if (validatedValue) {
+                where.push(`${escapedField} = :${paramKey}`);
+                replacements[paramKey] = validatedValue;
+              }
+            } else {
+              where.push(`${escapedField} = :${paramKey}`);
+              replacements[paramKey] = value;
+            }
+            break;
+          case '!=':
+          case 'NOT_EQUALS':
+          case 'NOT EQUALS':
+            if (f.type === 'date' || f.type === 'datetime') {
+              const validatedValue = validateDateValue(value, f.name, f.label);
+              if (validatedValue) {
+                where.push(`${escapedField} != :${paramKey}`);
+                replacements[paramKey] = validatedValue;
+              }
+            } else {
+              where.push(`${escapedField} != :${paramKey}`);
+              replacements[paramKey] = value;
+            }
+            break;
+          case '>':
+          case 'GREATER_THAN':
+          case 'GREATER THAN':
+            if (f.type === 'date' || f.type === 'datetime') {
+              const validatedValue = validateDateValue(value, f.name, f.label);
+              if (validatedValue) {
+                where.push(`${escapedField} > :${paramKey}`);
+                replacements[paramKey] = validatedValue;
+              }
+            } else {
+              where.push(`${escapedField} > :${paramKey}`);
+              replacements[paramKey] = value;
+            }
+            break;
+          case '<':
+          case 'LESS_THAN':
+          case 'LESS THAN':
+            if (f.type === 'date' || f.type === 'datetime') {
+              const validatedValue = validateDateValue(value, f.name, f.label);
+              if (validatedValue) {
+                where.push(`${escapedField} < :${paramKey}`);
+                replacements[paramKey] = validatedValue;
+              }
+            } else {
+              where.push(`${escapedField} < :${paramKey}`);
+              replacements[paramKey] = value;
+            }
+            break;
+          case '>=':
+          case 'GREATER_EQUAL':
+          case 'GREATER EQUAL':
+            if (f.type === 'date' || f.type === 'datetime') {
+              const validatedValue = validateDateValue(value, f.name, f.label);
+              if (validatedValue) {
+                where.push(`${escapedField} >= :${paramKey}`);
+                replacements[paramKey] = validatedValue;
+              }
+            } else {
+              where.push(`${escapedField} >= :${paramKey}`);
+              replacements[paramKey] = value;
+            }
+            break;
+          case '<=':
+          case 'LESS_EQUAL':
+          case 'LESS EQUAL':
+            if (f.type === 'date' || f.type === 'datetime') {
+              const validatedValue = validateDateValue(value, f.name, f.label);
+              if (validatedValue) {
+                where.push(`${escapedField} <= :${paramKey}`);
+                replacements[paramKey] = validatedValue;
+              }
+            } else {
+              where.push(`${escapedField} <= :${paramKey}`);
+              replacements[paramKey] = value;
+            }
+            break;
+          case 'LIKE':
+          case 'CONTAINS':
+            where.push(`${escapedField} LIKE :${paramKey}`);
+            replacements[paramKey] = `%${String(value)}%`;
+            break;
+          case 'NOT LIKE':
+          case 'NOT_CONTAINS':
+          case 'NOT CONTAINS':
+            where.push(`${escapedField} NOT LIKE :${paramKey}`);
+            replacements[paramKey] = `%${String(value)}%`;
+            break;
+          case 'STARTS WITH':
+          case 'STARTS_WITH':
+            where.push(`${escapedField} LIKE :${paramKey}`);
+            replacements[paramKey] = `${String(value)}%`;
+            break;
+          case 'ENDS WITH':
+          case 'ENDS_WITH':
+            where.push(`${escapedField} LIKE :${paramKey}`);
+            replacements[paramKey] = `%${String(value)}`;
+            break;
+          case 'IN':
+            // Value should be comma-separated or array
+            const inValues = Array.isArray(value) ? value : String(value).split(',').map(v => v.trim()).filter(v => v);
+            if (inValues.length > 0) {
+              const inPlaceholders = inValues.map((_, idx) => {
+                const inKey = `${paramKey}_${idx}`;
+                replacements[inKey] = inValues[idx];
+                return `:${inKey}`;
+              }).join(', ');
+              where.push(`${escapedField} IN (${inPlaceholders})`);
+            }
+            break;
+          case 'NOT IN':
+          case 'NOT_IN':
+            const notInValues = Array.isArray(value) ? value : String(value).split(',').map(v => v.trim()).filter(v => v);
+            if (notInValues.length > 0) {
+              const notInPlaceholders = notInValues.map((_, idx) => {
+                const notInKey = `${paramKey}_${idx}`;
+                replacements[notInKey] = notInValues[idx];
+                return `:${notInKey}`;
+              }).join(', ');
+              where.push(`${escapedField} NOT IN (${notInPlaceholders})`);
+            }
+            break;
+          case 'IS NULL':
+          case 'IS_NULL':
+            // For IS NULL, value can be 'true', true, or any truthy value to activate
+            // If value is empty but operator is set, also activate (frontend toggle)
+            if (value === 'true' || value === true || value === 1 || value === '1' || (isNullOperator && value !== undefined)) {
+              where.push(`${escapedField} IS NULL`);
+            }
+            break;
+          case 'IS NOT NULL':
+          case 'IS_NOT_NULL':
+            // For IS NOT NULL, value can be 'true', true, or any truthy value to activate
+            // If value is empty but operator is set, also activate (frontend toggle)
+            if (value === 'true' || value === true || value === 1 || value === '1' || (isNullOperator && value !== undefined)) {
+              where.push(`${escapedField} IS NOT NULL`);
+            }
+            break;
+          case 'BETWEEN':
+            // For date/number ranges, check for _from and _to
+            const fromValue = queryParams[`${f.name}_from`];
+            const toValue = queryParams[`${f.name}_to`];
+            if (fromValue && toValue) {
+              // Validate date values if field type is date/datetime
+              if (f.type === 'date' || f.type === 'datetime') {
+                const validatedFrom = validateDateValue(fromValue, f.name, f.label);
+                const validatedTo = validateDateValue(toValue, f.name, f.label);
+                if (validatedFrom && validatedTo) {
+                  where.push(`${escapedField} BETWEEN :${paramKey}_from AND :${paramKey}_to`);
+                  replacements[`${paramKey}_from`] = validatedFrom;
+                  replacements[`${paramKey}_to`] = validatedTo;
+                }
+              } else {
+                // For non-date types, use values as-is
+                where.push(`${escapedField} BETWEEN :${paramKey}_from AND :${paramKey}_to`);
+                replacements[`${paramKey}_from`] = fromValue;
+                replacements[`${paramKey}_to`] = toValue;
+              }
+            }
+            break;
+          default:
+            // Default behavior based on field type (backward compatibility)
         switch (f.type) {
           case 'text':
           case 'string':
@@ -957,12 +1172,32 @@ const pageService = {
             break;
           case 'select':
           case 'number':
+          case 'time':
+          case 'email':
+          case 'url':
+          case 'radio':
+          case 'boolean':
             where.push(`${escapedField} = :${paramKey}`);
             replacements[paramKey] = value;
             break;
+          case 'date':
+          case 'datetime':
+            // Validate date value for date/datetime fields
+            const validatedDateValue = validateDateValue(value, f.name, f.label);
+            if (validatedDateValue) {
+              where.push(`${escapedField} = :${paramKey}`);
+              replacements[paramKey] = validatedDateValue;
+            }
+            break;
+              case 'textarea':
+                // For textarea, default to LIKE (contains)
+                where.push(`${escapedField} LIKE :${paramKey}`);
+                replacements[paramKey] = `%${String(value)}%`;
+                break;
           default:
             where.push(`${escapedField} = :${paramKey}`);
             replacements[paramKey] = value;
+            }
         }
       });
     }
@@ -1100,7 +1335,7 @@ const pageService = {
    * For CUSTOM_QUERY type - strips WHERE/LIMIT/OFFSET clauses and applies filters/pagination from UI
    * User writes SQL with JOINs, CTEs, aggregations - filtering and pagination are handled by system
    */
-  async buildCustomQuery(config, queryParams, sequelize) {
+  async buildCustomQuery(config, queryParams, sequelize, options = {}) {
     if (!sequelize) {
       throw fromCode('TENANT_DB_NOT_AVAILABLE');
     }
@@ -1159,10 +1394,14 @@ const pageService = {
     const pageNum = resolvePageNumber(queryParams);
     const offset = (pageNum - 1) * pageSize;
     
+    // Support extraRows option (like PROCEDURE) to fetch one extra row for hasMore detection
+    const { extraRows = 0 } = options;
+    const limitToUse = pageSize + (Number.isFinite(extraRows) && extraRows > 0 ? extraRows : 0);
+    
     // Use applyPaginationClause to add LIMIT/OFFSET based on dialect
     const paginationResult = applyPaginationClause(
       sqlWithFilters,
-      pageSize,
+      limitToUse,  // Fetch pageSize + extraRows to detect hasMore
       offset,
       sequelize,
       queryFragments.replacements,
@@ -1947,7 +2186,8 @@ const pageService = {
     // Handle CUSTOM_QUERY type
     if (source_type === 'CUSTOM_QUERY') {
       try {
-        const customQuery = await this.buildCustomQuery(config, queryParams, tenantSequelize);
+        // Fetch pageSize + 1 rows to detect hasMore (like PROCEDURE) - avoids expensive COUNT query
+        const customQuery = await this.buildCustomQuery(config, queryParams, tenantSequelize, { extraRows: 1 });
         
         const startTime = Date.now();
         let executionSuccess = true;
@@ -2000,51 +2240,19 @@ const pageService = {
         let data = Array.isArray(dataRows) ? dataRows : [];
         data = this.selectColumns(data, config.columns);
 
-        // Pagination is handled by buildCustomQuery, so we have the correct number of rows
-        // But we need to determine if there are more rows (for hasMore)
+        // Determine hasMore by checking if we got more rows than pageSize (like PROCEDURE)
         const pageSize = resolvePageSize(config, queryParams);
-        const hasMore = data.length === pageSize; // If we got full page, there might be more
+        const pageNum = resolvePageNumber(queryParams);
+        let hasMore = false;
         
-        // Count total rows for pagination (execute count query)
-        // Build count query from the base query (without pagination)
-        let total = data.length;
-        try {
-          // Rebuild query without pagination to count
-          const sourceParams = config?.source_params || [];
-          const { customQuery: baseCustomQuery } = extractCustomQuery(sourceParams);
-          
-          if (baseCustomQuery) {
-            const { sql: sqlWithoutWhere } = stripWhereClause(baseCustomQuery);
-            const { sql: sqlWithoutPagination } = stripPaginationClauses(sqlWithoutWhere);
-            
-            // Build WHERE clause from filter/search UI for count
-            const queryFragments = this.buildQuery(config, queryParams, tenantSequelize);
-            const whereClauseFromUI = queryFragments.whereClause;
-            
-            // Apply WHERE clause from UI filters for count
-            let countBaseSql = sqlWithoutPagination;
-            if (whereClauseFromUI && whereClauseFromUI.trim()) {
-              const whereBody = whereClauseFromUI.replace(/^WHERE\s+/i, '').trim();
-              if (whereBody) {
-                countBaseSql = appendWhereClauseBody(sqlWithoutPagination, whereClauseFromUI);
-              }
-            }
-            
-            // Build count query by wrapping the base query
-            const countQuery = `SELECT COUNT(*) as total FROM (${countBaseSql}) as count_subquery`;
-            const countResult = await tenantSequelize.query(countQuery, {
-              replacements: queryFragments.replacements,
-              type: tenantSequelize.QueryTypes.SELECT,
-              timeout: 30000
-            });
-            total = countResult[0]?.total || data.length;
-          }
-        } catch (countError) {
-          // If count fails, estimate based on data length
-          // If we got full page, assume there are more
-          total = hasMore ? pageSize + 1 : data.length;
-          console.warn('Failed to count CUSTOM_QUERY rows:', countError.message);
+        if (data.length > pageSize) {
+          hasMore = true;
+          data = data.slice(0, pageSize); // Remove the extra row
         }
+
+        // Calculate total based on hasMore (same as PROCEDURE) - avoids expensive COUNT query
+        const totalBase = ((pageNum - 1) * pageSize) + data.length;
+        const total = hasMore ? totalBase + 1 : totalBase;
 
         performance.rowCount = data.length;
         return { 
@@ -2095,6 +2303,19 @@ const pageService = {
         } catch (queryError) {
           executionSuccess = false;
           errorMessage = queryError.message || String(queryError);
+          // Enhance error with context if not already enhanced
+          if (!queryError.queryContext) {
+            const enhancedError = createErrorWithContext(queryError, {
+              sql: dataSql,
+              replacements: { ...replacements },
+              executionTime: Date.now() - startTime,
+              pageKey: config.page_key,
+              sourceType: source_type,
+              dataSource: data_source,
+              queryParams
+            });
+            throw enhancedError;
+          }
           throw queryError;
         } finally {
           const executionTime = Date.now() - startTime;
@@ -2217,6 +2438,11 @@ const pageService = {
         return { data, total, hasMore: false, performance };
       }
     } catch (error) {
+      // If error is already enhanced with context, use it as-is
+      if (error.queryContext) {
+        throw error;
+      }
+
       // Check for table/view not found errors
       const errorMessage = error.message || '';
       if (errorMessage.includes("doesn't exist") || 
@@ -2226,16 +2452,28 @@ const pageService = {
         throw fromCode('PAGE_DATA_SOURCE_INVALID', [`Data source '${data_source}' does not exist in tenant database`]);
       }
       
-      // Check for SQL syntax errors
-      if (errorMessage.includes("syntax") || 
-          errorMessage.includes("SQL syntax") ||
-          error.name === 'SequelizeDatabaseError') {
-        throw fromCode('PAGE_QUERY_ERROR', [`Query execution failed: ${errorMessage}`]);
+      // Enhance error with context for better user-friendly messages
+      // Try to get SQL from the last query attempt
+      let sql = null;
+      let replacements = {};
+      try {
+        const queryResult = this.buildQuery(config, queryParams, tenantSequelize);
+        sql = `SELECT * FROM ${queryResult.data_source || data_source} ${queryResult.whereClause || ''} ${queryResult.orderBy || ''}`;
+        replacements = queryResult.replacements || {};
+      } catch (buildError) {
+        // If buildQuery fails, we can't get SQL context
       }
 
-      // Map other DB errors
-      if (error.code) throw error; // Already mapped
-      throw mapDbError(error);
+      const enhancedError = createErrorWithContext(error, {
+        sql: sql,
+        replacements: replacements,
+        executionTime: null,
+        pageKey: config.page_key,
+        sourceType: source_type,
+        dataSource: data_source,
+        queryParams
+      });
+      throw enhancedError;
     }
   },
 

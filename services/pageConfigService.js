@@ -46,7 +46,18 @@ const pageConfigService = {
           Joi.object({
             name: Joi.string().required(),
             label: Joi.string().required(),
-            type: Joi.string().valid('text', 'tags', 'select', 'number', 'date').required(),
+            type: Joi.string().valid('text', 'tags', 'select', 'number', 'date', 'boolean', 'time', 'datetime', 'email', 'url', 'textarea', 'radio').required(),
+            operator: Joi.string().valid(
+              '=', '!=', '>', '<', '>=', '<=',
+              'LIKE', 'NOT LIKE', 'STARTS WITH', 'ENDS WITH',
+              'IN', 'NOT IN',
+              'IS NULL', 'IS NOT NULL',
+              'BETWEEN',
+              'equals', 'not_equals', 'greater_than', 'less_than',
+              'greater_equal', 'less_equal', 'contains', 'not_contains',
+              'starts_with', 'ends_with', 'in', 'not_in',
+              'is_null', 'is_not_null', 'between'
+            ).optional().allow('', null),
             options: Joi.array().items(Joi.string()).optional(),
           })
         )
@@ -188,11 +199,11 @@ const pageConfigService = {
 
     // Check if page_key already exists (only if provided by user)
     if (payload.page_key) {
-      const existing = await PageConfig.findOne({
-        where: { page_key: data.page_key },
-      });
-      if (existing) {
-        throw fromCode('DB_DUPLICATE_KEY', [`Page key '${data.page_key}' already exists`]);
+    const existing = await PageConfig.findOne({
+      where: { page_key: data.page_key },
+    });
+    if (existing) {
+      throw fromCode('DB_DUPLICATE_KEY', [`Page key '${data.page_key}' already exists`]);
       }
     }
 
@@ -265,7 +276,18 @@ const pageConfigService = {
           Joi.object({
             name: Joi.string().required(),
             label: Joi.string().required(),
-            type: Joi.string().valid('text', 'tags', 'select', 'number', 'date').required(),
+            type: Joi.string().valid('text', 'tags', 'select', 'number', 'date', 'boolean', 'time', 'datetime', 'email', 'url', 'textarea', 'radio').required(),
+            operator: Joi.string().valid(
+              '=', '!=', '>', '<', '>=', '<=',
+              'LIKE', 'NOT LIKE', 'STARTS WITH', 'ENDS WITH',
+              'IN', 'NOT IN',
+              'IS NULL', 'IS NOT NULL',
+              'BETWEEN',
+              'equals', 'not_equals', 'greater_than', 'less_than',
+              'greater_equal', 'less_equal', 'contains', 'not_contains',
+              'starts_with', 'ends_with', 'in', 'not_in',
+              'is_null', 'is_not_null', 'between'
+            ).optional().allow('', null),
             options: Joi.array().items(Joi.string()).optional(),
           })
         )
