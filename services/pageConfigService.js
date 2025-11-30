@@ -9,7 +9,7 @@ const pageConfigService = {
   // Create new page config
   async createPageConfig(masterDb, payload, user = null) {
     const schema = Joi.object({
-      page_key: Joi.string().required().min(1).max(100).pattern(/^[a-zA-Z0-9_-]+$/),
+      page_key: Joi.string().optional().min(1).max(100).pattern(/^[a-zA-Z0-9_-]+$/),
       organization_id: Joi.string().allow(null, '').optional(),
       title: Joi.string().required().min(1).max(200),
       data_source: Joi.string().required().min(1).max(100).pattern(/^[a-zA-Z_][a-zA-Z0-9_]*$/),
@@ -58,6 +58,54 @@ const pageConfigService = {
 
     const data = validate(schema, payload);
 
+    // Generate page_key from title if not provided
+    if (!data.page_key) {
+      // Convert title to page_key: lowercase, replace spaces with underscores, remove special chars
+      let generatedKey = data.title
+        .toLowerCase()
+        .trim()
+        .replace(/[^a-z0-9\s-]/g, '') // Remove special chars except spaces and hyphens
+        .replace(/\s+/g, '_') // Replace spaces with underscores
+        .replace(/-+/g, '-') // Replace multiple hyphens with single
+        .replace(/^[-_]+|[-_]+$/g, '') // Remove leading/trailing hyphens/underscores
+        .substring(0, 100); // Limit to 100 chars
+      
+      // Ensure it starts with a letter or number
+      if (!/^[a-zA-Z0-9]/.test(generatedKey)) {
+        generatedKey = 'page_' + generatedKey;
+      }
+      
+      // If still empty, use a default
+      if (!generatedKey || generatedKey.length === 0) {
+        generatedKey = 'page_' + Date.now();
+      }
+      
+      // Ensure uniqueness by checking and appending suffix if needed
+      let finalKey = generatedKey;
+      let suffix = 1;
+      let existing = await PageConfig.findOne({
+        where: { page_key: finalKey },
+      });
+      
+      while (existing) {
+        // Append suffix, but keep total length under 100 chars
+        const baseKey = generatedKey.substring(0, 100 - String(suffix).length - 1);
+        finalKey = `${baseKey}_${suffix}`;
+        existing = await PageConfig.findOne({
+          where: { page_key: finalKey },
+        });
+        suffix++;
+        
+        // Safety check to prevent infinite loop
+        if (suffix > 1000) {
+          finalKey = 'page_' + Date.now();
+          break;
+        }
+      }
+      
+      data.page_key = finalKey;
+    }
+
     // Validate SQL if it's a PROCEDURE type with p_sql
     if (data.source_type === 'PROCEDURE' && Array.isArray(data.source_params)) {
       const pSqlParam = data.source_params.find(p => p && p.name === 'p_sql');
@@ -72,12 +120,14 @@ const pageConfigService = {
       }
     }
 
-    // Check if page_key already exists
-    const existing = await PageConfig.findOne({
-      where: { page_key: data.page_key },
-    });
-    if (existing) {
-      throw fromCode('DB_DUPLICATE_KEY', [`Page key '${data.page_key}' already exists`]);
+    // Check if page_key already exists (only if provided by user)
+    if (payload.page_key) {
+      const existing = await PageConfig.findOne({
+        where: { page_key: data.page_key },
+      });
+      if (existing) {
+        throw fromCode('DB_DUPLICATE_KEY', [`Page key '${data.page_key}' already exists`]);
+      }
     }
 
     const id = generateId('page');

@@ -9,6 +9,7 @@ const adminRoutes = require('./adminRoutes');
 const organizationRoutes = require('./organizationRoutes');
 const auditLogRoutes = require('./auditLogRoutes');
 const licenseRoutes = require('./licenseRoutes');
+const usageMetricsRoutes = require('./usageMetricsRoutes');
 const { tenantResolver } = require('../middleware/tenantResolver');
 const { login } = require('../controllers/authController');
 
@@ -27,6 +28,7 @@ router.use('/admin', adminRoutes); // Admin feature control and user blocking ro
 router.use('/', organizationRoutes); // Organization branding routes (public + authenticated)
 router.use('/api', auditLogRoutes); // Audit log routes
 router.use('/license', licenseRoutes); // License management routes
+router.use('/usage', usageMetricsRoutes); // Usage analytics and metrics routes
 
 // Tenant-aware routes (with tenant resolution)
 router.use(tenantResolver);
