@@ -157,6 +157,75 @@ function stripOrderByClause(sql = '') {
   };
 }
 
+/**
+ * Strip WHERE clause from SQL query
+ * Returns { sql: sqlWithoutWhere, whereClause: extractedWhereClause }
+ */
+function stripWhereClause(sql = '') {
+  if (!sql) return { sql: '', whereClause: '' };
+  
+  let cleaned = stripTrailingSemicolon(sql);
+  
+  // Find WHERE clause
+  const whereRegex = /\bWHERE\b/gi;
+  let match;
+  let whereIndex = -1;
+  
+  while ((match = whereRegex.exec(cleaned)) !== null) {
+    whereIndex = match.index;
+  }
+  
+  if (whereIndex === -1) {
+    return { sql: cleaned, whereClause: '' };
+  }
+  
+  // Extract WHERE clause (handle nested conditions and parentheses)
+  let depth = 0;
+  let inString = false;
+  let stringChar = null;
+  let endIndex = whereIndex + 5; // Start after "WHERE"
+  
+  for (let i = endIndex; i < cleaned.length; i++) {
+    const char = cleaned[i];
+    
+    // Handle string literals
+    if ((char === "'" || char === '"') && (i === 0 || cleaned[i-1] !== '\\')) {
+      if (!inString) {
+        inString = true;
+        stringChar = char;
+      } else if (char === stringChar) {
+        inString = false;
+        stringChar = null;
+      }
+      continue;
+    }
+    
+    if (inString) continue;
+    
+    // Track parentheses for nested conditions
+    if (char === '(') depth++;
+    if (char === ')') depth--;
+    
+    // Check for clause boundaries (GROUP BY, ORDER BY, HAVING, LIMIT, etc.)
+    if (depth === 0) {
+      const remaining = cleaned.substring(i).toUpperCase();
+      if (remaining.match(/^\s+(GROUP\s+BY|ORDER\s+BY|HAVING|LIMIT|OFFSET|UNION)/)) {
+        endIndex = i;
+        break;
+      }
+    }
+  }
+  
+  if (endIndex === whereIndex + 5) {
+    endIndex = cleaned.length; // WHERE is at the end
+  }
+  
+  const whereClause = cleaned.substring(whereIndex, endIndex).trim();
+  const sqlWithoutWhere = (cleaned.substring(0, whereIndex) + cleaned.substring(endIndex)).trim();
+  
+  return { sql: sqlWithoutWhere, whereClause };
+}
+
 function appendWhereClauseBody(sqlBody = '', whereClause = '') {
   if (!sqlBody) return '';
   if (!whereClause) return sqlBody.trim();
@@ -199,6 +268,92 @@ function extractProcedureSql(sourceParams = []) {
   });
 
   return { baseSql, remainingParams };
+}
+
+/**
+ * Extract custom_query SQL and remaining parameters from source_params
+ * Similar to extractProcedureSql but for CUSTOM_QUERY type
+ */
+function extractCustomQuery(sourceParams = []) {
+  if (!Array.isArray(sourceParams)) {
+    return { customQuery: null, queryParams: [] };
+  }
+
+  let customQuery = null;
+  const queryParams = [];
+
+  sourceParams.forEach((param) => {
+    if (!param || !param.name) return;
+    if (param.name === 'custom_query' && customQuery === null) {
+      const hasValue = Object.prototype.hasOwnProperty.call(param, 'value');
+      const candidate = hasValue ? param.value : param.default_value;
+      if (typeof candidate === 'string' && candidate.trim()) {
+        customQuery = candidate.trim();
+      }
+    } else if (param.name !== 'custom_query') {
+      // Store other parameters for query parameterization
+      queryParams.push(param);
+    }
+  });
+
+  return { customQuery, queryParams };
+}
+
+/**
+ * Extract table names from SQL query
+ * Handles: FROM, JOIN, INNER JOIN, LEFT JOIN, RIGHT JOIN, FULL JOIN, etc.
+ * Returns array of { tableName, alias } objects
+ */
+function extractTablesFromSql(sql) {
+  if (!sql || typeof sql !== 'string') {
+    return [];
+  }
+  
+  const tables = [];
+  const normalized = sql.trim();
+  
+  // Remove comments to avoid false matches
+  let cleanedSql = normalized
+    .replace(/--.*$/gm, '') // Remove single-line comments
+    .replace(/\/\*[\s\S]*?\*\//g, ''); // Remove multi-line comments
+  
+  // Extract FROM clause tables
+  const fromRegex = /\bFROM\s+([^\s(,]+(?:\s+(?:AS\s+)?[^\s,()]+)?)/gi;
+  let fromMatch;
+  while ((fromMatch = fromRegex.exec(cleanedSql)) !== null) {
+    const tablePart = fromMatch[1].trim();
+    const parts = tablePart.split(/\s+(?:AS\s+)?/i);
+    const rawTableName = parts[0].replace(/[`"'\[\]]/g, '');
+    const alias = parts[1] ? parts[1].replace(/[`"'\[\]]/g, '').toLowerCase() : rawTableName.toLowerCase();
+    
+    // Validate table name format (basic check)
+    if (rawTableName && /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(rawTableName)) {
+      // Avoid duplicates
+      if (!tables.some(t => t.tableName === rawTableName && t.alias === alias)) {
+        tables.push({ tableName: rawTableName, alias });
+      }
+    }
+  }
+  
+  // Extract JOIN clause tables
+  const joinRegex = /\b(?:INNER|LEFT|RIGHT|FULL|OUTER)?\s+JOIN\s+([^\s(,]+(?:\s+(?:AS\s+)?[^\s,()]+)?)/gi;
+  let joinMatch;
+  while ((joinMatch = joinRegex.exec(cleanedSql)) !== null) {
+    const tablePart = joinMatch[1].trim();
+    const parts = tablePart.split(/\s+(?:AS\s+)?/i);
+    const rawTableName = parts[0].replace(/[`"'\[\]]/g, '');
+    const alias = parts[1] ? parts[1].replace(/[`"'\[\]]/g, '').toLowerCase() : rawTableName.toLowerCase();
+    
+    // Validate table name format
+    if (rawTableName && /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(rawTableName)) {
+      // Avoid duplicates
+      if (!tables.some(t => t.tableName === rawTableName && t.alias === alias)) {
+        tables.push({ tableName: rawTableName, alias });
+      }
+    }
+  }
+  
+  return tables;
 }
 
 /**
@@ -697,14 +852,17 @@ const pageService = {
   },
 
   buildQuery(config, queryParams, sequelize) {
-    if (!config || !config.data_source) {
+    const source_type = config?.source_type || 'TABLE';
+    
+    // For CUSTOM_QUERY, data_source is optional
+    if (source_type !== 'CUSTOM_QUERY' && (!config || !config.data_source)) {
       throw fromCode('PAGE_CONFIG_INVALID', ['Page configuration is missing data_source']);
     }
 
-    const { columns, searchable_fields, filterable_fields, default_sort, data_source, source_type = 'TABLE' } = config;
+    const { columns, searchable_fields, filterable_fields, default_sort, data_source, source_type: configSourceType = 'TABLE' } = config;
     
-    // Validate data_source is a safe identifier (alphanumeric, underscore, no SQL injection)
-    if (!isSafeIdentifier(data_source)) {
+    // Validate data_source is a safe identifier (only if it's provided and not CUSTOM_QUERY)
+    if (source_type !== 'CUSTOM_QUERY' && data_source && !isSafeIdentifier(data_source)) {
       throw fromCode('PAGE_DATA_SOURCE_INVALID', [`Invalid data source name: ${data_source}`]);
     }
 
@@ -934,6 +1092,86 @@ const pageService = {
       limit: limitToUse,
       offset: offsetToUse,
       hadExistingPagination
+    };
+  },
+
+  /**
+   * Build custom query with filters from UI
+   * For CUSTOM_QUERY type - strips WHERE/LIMIT/OFFSET clauses and applies filters/pagination from UI
+   * User writes SQL with JOINs, CTEs, aggregations - filtering and pagination are handled by system
+   */
+  async buildCustomQuery(config, queryParams, sequelize) {
+    if (!sequelize) {
+      throw fromCode('TENANT_DB_NOT_AVAILABLE');
+    }
+
+    const sourceParams = config?.source_params || [];
+    const { customQuery } = extractCustomQuery(sourceParams);
+
+    if (!customQuery) {
+      throw fromCode('PAGE_CONFIG_INVALID', ['Custom query configuration must include a custom_query parameter']);
+    }
+
+    // Strip WHERE clause from custom query (filters will be applied from UI)
+    const { sql: sqlWithoutWhere, whereClause } = stripWhereClause(customQuery);
+    
+    if (whereClause) {
+      // Log warning that WHERE was stripped (for debugging)
+      console.warn(`WHERE clause stripped from custom query (filters applied from UI instead)`);
+    }
+
+    // Strip pagination clauses (LIMIT/OFFSET) from custom query (pagination will be applied from UI)
+    const { sql: sqlWithoutPagination, paginationClause } = stripPaginationClauses(sqlWithoutWhere);
+    
+    if (paginationClause) {
+      // Log warning that pagination was stripped (for debugging)
+      console.warn(`Pagination clause stripped from custom query (pagination applied from UI instead)`);
+    }
+
+    // Security validation on SQL without WHERE and pagination
+    try {
+      await validateProcedureSql(sqlWithoutPagination, {
+        checkReadOnly: true,
+        checkComplexity: true,
+        maxTimeout: 30000,
+        sourceType: 'CUSTOM_QUERY'
+      });
+    } catch (validationError) {
+      throw validationError;
+    }
+
+    // Build WHERE clause from filter/search UI (like buildQuery does for TABLE/VIEW)
+    const queryFragments = this.buildQuery(config, queryParams, sequelize);
+    const whereClauseFromUI = queryFragments.whereClause;
+    
+    // Apply WHERE clause from UI filters
+    let sqlWithFilters = sqlWithoutPagination;
+    if (whereClauseFromUI && whereClauseFromUI.trim()) {
+      // Remove WHERE keyword if present
+      const whereBody = whereClauseFromUI.replace(/^WHERE\s+/i, '').trim();
+      if (whereBody) {
+        sqlWithFilters = appendWhereClauseBody(sqlWithoutPagination, whereClauseFromUI);
+      }
+    }
+
+    // Apply pagination from UI using system pagination mechanism
+    const pageSize = resolvePageSize(config, queryParams);
+    const pageNum = resolvePageNumber(queryParams);
+    const offset = (pageNum - 1) * pageSize;
+    
+    // Use applyPaginationClause to add LIMIT/OFFSET based on dialect
+    const paginationResult = applyPaginationClause(
+      sqlWithFilters,
+      pageSize,
+      offset,
+      sequelize,
+      queryFragments.replacements,
+      'custom' // key prefix for replacement parameters
+    );
+
+    return {
+      sql: paginationResult.sql,
+      replacements: paginationResult.replacements
     };
   },
 
@@ -1229,6 +1467,192 @@ const pageService = {
   },
 
   /**
+   * Detect columns and recommend searchable/filterable columns
+   * with performance feedback based on table metadata
+   * Enhanced version for CUSTOM_QUERY that analyzes table structure
+   */
+  async detectColumnsWithMetadata(customQuery, sequelize) {
+    if (!sequelize) {
+      throw fromCode('TENANT_DB_NOT_AVAILABLE');
+    }
+
+    // Step 1: Detect columns from query result (existing logic)
+    const { columns, executionTime } = await this.detectColumnsFromSql(customQuery, sequelize);
+    
+    // Step 2: Extract tables from SQL
+    const tables = extractTablesFromSql(customQuery);
+    
+    // Step 3: Get metadata for all tables
+    const tableMetadata = {};
+    
+    // If no tables found (e.g., CTE-only query), still proceed with column detection
+    // but without metadata recommendations
+    if (tables.length > 0) {
+      for (const { tableName } of tables) {
+        try {
+          // Get columns
+          const tableColumns = await dbMetadataService.getTableColumns(sequelize, tableName);
+          
+          // Get indexes
+          const tableIndexes = await dbMetadataService.getTableIndexes(sequelize, tableName);
+          
+          tableMetadata[tableName] = {
+            columns: tableColumns,
+            indexes: tableIndexes
+          };
+        } catch (error) {
+          // Skip if table doesn't exist or error (might be a view or CTE)
+          console.warn(`Could not fetch metadata for table ${tableName}:`, error.message);
+        }
+      }
+    }
+    
+    // Step 4: Match result columns to table columns
+    const enhancedColumns = columns.map(col => {
+      const colName = col.name.toLowerCase();
+      let matchedTable = null;
+      let matchedColumn = null;
+      let hasIndex = false;
+      let isUnique = false;
+      
+      // Try to find matching column in table metadata
+      for (const [tableName, metadata] of Object.entries(tableMetadata)) {
+        const found = metadata.columns.find(tc => {
+          const tcName = tc.name.toLowerCase();
+          return tcName === colName || 
+                 tcName.replace(/[`"'\[\]]/g, '') === colName.replace(/[`"'\[\]]/g, '');
+        });
+        
+        if (found) {
+          matchedTable = tableName;
+          matchedColumn = found;
+          // Check if column has index
+          const indexInfo = metadata.indexes[found.name];
+          if (indexInfo) {
+            hasIndex = true;
+            isUnique = indexInfo.isUnique;
+          }
+          break;
+        }
+      }
+      
+      return {
+        ...col,
+        matchedTable,
+        matchedColumn,
+        hasIndex,
+        isUnique,
+        // Performance score: higher for indexed columns
+        performanceScore: hasIndex ? (isUnique ? 100 : 80) : (matchedColumn ? 50 : 30)
+      };
+    });
+    
+    // Helper function to format label from column name
+    const formatLabelFromName = (name = '') => {
+      return name
+        .replace(/_/g, ' ')
+        .replace(/([a-z])([A-Z])/g, '$1 $2')
+        .split(' ')
+        .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+        .join(' ');
+    };
+    
+    // Step 5: Recommend filterable columns (prioritize indexed)
+    const filterableRecommendations = enhancedColumns
+      .filter(col => {
+        // Prefer indexed columns, or numeric/date columns
+        return col.hasIndex || 
+               col.type === 'number' || 
+               col.type === 'date' ||
+               col.type === 'boolean';
+      })
+      .sort((a, b) => b.performanceScore - a.performanceScore)
+      .slice(0, 10) // Top 10 recommendations
+      .map(col => ({
+        name: col.name,
+        label: formatLabelFromName(col.name),
+        type: col.hasIndex ? (col.type === 'number' ? 'number' : 'text') : 'text',
+        performance: col.hasIndex ? 'excellent' : 'good',
+        hasIndex: col.hasIndex,
+        isUnique: col.isUnique,
+        recommendation: col.hasIndex 
+          ? 'Recommended: Has index for fast filtering'
+          : 'Good: Suitable for filtering'
+      }));
+    
+    // Step 6: Recommend searchable columns (text columns, especially indexed)
+    const searchableRecommendations = enhancedColumns
+      .filter(col => {
+        // Prefer text columns, especially indexed ones
+        return col.type === 'string' || col.type === 'text';
+      })
+      .sort((a, b) => {
+        // Prioritize indexed text columns
+        if (a.hasIndex && !b.hasIndex) return -1;
+        if (!a.hasIndex && b.hasIndex) return 1;
+        return b.performanceScore - a.performanceScore;
+      })
+      .slice(0, 10) // Top 10 recommendations
+      .map(col => ({
+        name: col.name,
+        performance: col.hasIndex ? 'excellent' : 'good',
+        hasIndex: col.hasIndex,
+        recommendation: col.hasIndex
+          ? 'Recommended: Has index for fast searching'
+          : 'Good: Suitable for text search'
+      }));
+    
+    // Step 7: Performance feedback
+    const performanceFeedback = {
+      warnings: [],
+      suggestions: [],
+      summary: {
+        totalColumns: enhancedColumns.length,
+        indexedColumns: enhancedColumns.filter(c => c.hasIndex).length,
+        recommendedFilterable: filterableRecommendations.length,
+        recommendedSearchable: searchableRecommendations.length
+      }
+    };
+    
+    // Check for non-indexed filterable columns
+    const nonIndexedFilterable = enhancedColumns.filter(c => 
+      (c.type === 'number' || c.type === 'date') && !c.hasIndex
+    );
+    
+    if (nonIndexedFilterable.length > 0) {
+      performanceFeedback.warnings.push({
+        type: 'performance',
+        message: `${nonIndexedFilterable.length} filterable column(s) without indexes`,
+        details: `Consider adding indexes to: ${nonIndexedFilterable.slice(0, 5).map(c => c.name).join(', ')}`,
+        severity: 'medium'
+      });
+    }
+    
+    // Check for text columns without indexes
+    const nonIndexedText = enhancedColumns.filter(c => 
+      c.type === 'string' && !c.hasIndex
+    );
+    
+    if (nonIndexedText.length > 3) {
+      performanceFeedback.suggestions.push({
+        type: 'optimization',
+        message: 'Consider adding indexes to frequently searched text columns',
+        details: `Found ${nonIndexedText.length} text columns without indexes`
+      });
+    }
+    
+    return {
+      columns: enhancedColumns,
+      recommendations: {
+        filterable: filterableRecommendations,
+        searchable: searchableRecommendations
+      },
+      performance: performanceFeedback,
+      executionTime
+    };
+  },
+
+  /**
    * Select only specified columns from result set
    */
   selectColumns(data, columns) {
@@ -1514,6 +1938,121 @@ const pageService = {
         performance.rowCount = paginatedData.length;
 
         return { data: paginatedData, total, hasMore, performance };
+      } catch (error) {
+        if (error.code) throw error;
+        throw mapDbError(error);
+      }
+    }
+
+    // Handle CUSTOM_QUERY type
+    if (source_type === 'CUSTOM_QUERY') {
+      try {
+        const customQuery = await this.buildCustomQuery(config, queryParams, tenantSequelize);
+        
+        const startTime = Date.now();
+        let executionSuccess = true;
+        let errorMessage = null;
+        let dataRows = [];
+        let executionTime = null;
+        
+        try {
+          dataRows = await tenantSequelize.query(customQuery.sql, {
+            replacements: customQuery.replacements,
+            type: tenantSequelize.QueryTypes.SELECT,
+            timeout: 30000
+          });
+        } catch (queryError) {
+          executionSuccess = false;
+          errorMessage = queryError.message || String(queryError);
+          executionTime = Date.now() - startTime;
+          
+          const enhancedError = createErrorWithContext(queryError, {
+            sql: customQuery.sql,
+            replacements: customQuery.replacements,
+            executionTime,
+            pageKey: config.page_key,
+            sourceType: 'CUSTOM_QUERY',
+            dataSource: data_source || 'custom_query',
+            queryParams
+          });
+          throw enhancedError;
+        } finally {
+          executionTime = executionTime ?? (Date.now() - startTime);
+          performance.queryExecutionTimeMs = executionTime;
+          logQueryExecution({
+            organizationId: reqDb.organizationId,
+            pageKey: config.page_key,
+            tenantId: reqDb.tenantId,
+            userId: auditContext.userId,
+            ipAddress: auditContext.ipAddress,
+            sqlText: customQuery.sql,
+            executionTime,
+            rowsReturned: Array.isArray(dataRows) ? dataRows.length : 0,
+            success: executionSuccess,
+            errorMessage,
+            queryParams: Object.keys(queryParams).length > 0 ? queryParams : null,
+            actionType,
+            sourceType: 'CUSTOM_QUERY',
+            dataSource: data_source || 'custom_query'
+          });
+        }
+
+        let data = Array.isArray(dataRows) ? dataRows : [];
+        data = this.selectColumns(data, config.columns);
+
+        // Pagination is handled by buildCustomQuery, so we have the correct number of rows
+        // But we need to determine if there are more rows (for hasMore)
+        const pageSize = resolvePageSize(config, queryParams);
+        const hasMore = data.length === pageSize; // If we got full page, there might be more
+        
+        // Count total rows for pagination (execute count query)
+        // Build count query from the base query (without pagination)
+        let total = data.length;
+        try {
+          // Rebuild query without pagination to count
+          const sourceParams = config?.source_params || [];
+          const { customQuery: baseCustomQuery } = extractCustomQuery(sourceParams);
+          
+          if (baseCustomQuery) {
+            const { sql: sqlWithoutWhere } = stripWhereClause(baseCustomQuery);
+            const { sql: sqlWithoutPagination } = stripPaginationClauses(sqlWithoutWhere);
+            
+            // Build WHERE clause from filter/search UI for count
+            const queryFragments = this.buildQuery(config, queryParams, tenantSequelize);
+            const whereClauseFromUI = queryFragments.whereClause;
+            
+            // Apply WHERE clause from UI filters for count
+            let countBaseSql = sqlWithoutPagination;
+            if (whereClauseFromUI && whereClauseFromUI.trim()) {
+              const whereBody = whereClauseFromUI.replace(/^WHERE\s+/i, '').trim();
+              if (whereBody) {
+                countBaseSql = appendWhereClauseBody(sqlWithoutPagination, whereClauseFromUI);
+              }
+            }
+            
+            // Build count query by wrapping the base query
+            const countQuery = `SELECT COUNT(*) as total FROM (${countBaseSql}) as count_subquery`;
+            const countResult = await tenantSequelize.query(countQuery, {
+              replacements: queryFragments.replacements,
+              type: tenantSequelize.QueryTypes.SELECT,
+              timeout: 30000
+            });
+            total = countResult[0]?.total || data.length;
+          }
+        } catch (countError) {
+          // If count fails, estimate based on data length
+          // If we got full page, assume there are more
+          total = hasMore ? pageSize + 1 : data.length;
+          console.warn('Failed to count CUSTOM_QUERY rows:', countError.message);
+        }
+
+        performance.rowCount = data.length;
+        return { 
+          data, 
+          total,
+          hasMore,
+          performance 
+        };
       } catch (error) {
         if (error.code) throw error;
         throw mapDbError(error);
@@ -1877,6 +2416,64 @@ const pageService = {
         }
 
         return { data: processedData };
+      } catch (error) {
+        if (error.code) throw error;
+        throw mapDbError(error);
+      }
+    }
+
+    // Handle CUSTOM_QUERY type
+    if (source_type === 'CUSTOM_QUERY') {
+      try {
+        const customQuery = await this.buildCustomQuery(config, queryParams, tenantSequelize);
+        
+        const startTime = Date.now();
+        let executionSuccess = true;
+        let errorMessage = null;
+        let dataRows = [];
+        
+        try {
+          dataRows = await tenantSequelize.query(customQuery.sql, {
+            replacements: customQuery.replacements,
+            type: tenantSequelize.QueryTypes.SELECT,
+            timeout: 30000
+          });
+        } catch (queryError) {
+          executionSuccess = false;
+          errorMessage = queryError.message || String(queryError);
+          throw queryError;
+        } finally {
+          const executionTime = Date.now() - startTime;
+          logQueryExecution({
+            organizationId: reqDb.organizationId,
+            pageKey: config.page_key,
+            tenantId: reqDb.tenantId,
+            userId: auditContext.userId,
+            ipAddress: auditContext.ipAddress,
+            sqlText: customQuery.sql,
+            executionTime,
+            rowsReturned: Array.isArray(dataRows) ? dataRows.length : 0,
+            success: executionSuccess,
+            errorMessage,
+            queryParams: Object.keys(queryParams).length > 0 ? { ...queryParams, exportFormat: auditContext.exportFormat || 'csv' } : { exportFormat: auditContext.exportFormat || 'csv' },
+            actionType: 'page_data_download',
+            sourceType: 'CUSTOM_QUERY',
+            dataSource: data_source || 'custom_query'
+          });
+        }
+
+        if (!Array.isArray(dataRows)) {
+          return { data: [] };
+        }
+
+        let data = this.selectColumns(dataRows, config.columns);
+        
+        // Enforce download limit as safety measure (even if user handles pagination in SQL)
+        if (downloadLimit && Array.isArray(data) && data.length > downloadLimit) {
+          data = data.slice(0, downloadLimit);
+        }
+        
+        return { data };
       } catch (error) {
         if (error.code) throw error;
         throw mapDbError(error);

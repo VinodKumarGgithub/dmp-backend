@@ -23,12 +23,12 @@ const PageConfig = masterSequelize.define('page_config', {
     allowNull: false
   },
   data_source: {
-    // table or view name in tenant DB
+    // table or view name in tenant DB (optional for CUSTOM_QUERY)
     type: DataTypes.STRING,
-    allowNull: false
+    allowNull: true
   },
   source_type:{
-    type: DataTypes.ENUM('TABLE', 'VIEW', 'PROCEDURE'),
+    type: DataTypes.ENUM('TABLE', 'VIEW', 'PROCEDURE', 'CUSTOM_QUERY'),
     allowNull:false,
     defaultValue:'TABLE'
   },

@@ -11,7 +11,8 @@ const {
   getTableIndexes,
   getProcedureParameters,
   testQuery,
-  detectColumns
+  detectColumns,
+  detectColumnsEnhanced
 } = require('../controllers/pageController');
 
 const router = express.Router();
@@ -38,6 +39,7 @@ router.get('/:pageKey/download', requireActiveLicense('export'), downloadPageDat
 // Write operations - require active license
 router.post('/:pageKey/test-query', requireActiveLicense('create'), testQuery);
 router.post('/:pageKey/detect-columns', requireActiveLicense('create'), detectColumns);
+router.post('/:pageKey/detect-columns-enhanced', requireActiveLicense('create'), detectColumnsEnhanced);
 
 module.exports = router;
 

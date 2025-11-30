@@ -12,8 +12,13 @@ const pageConfigService = {
       page_key: Joi.string().optional().min(1).max(100).pattern(/^[a-zA-Z0-9_-]+$/),
       organization_id: Joi.string().allow(null, '').optional(),
       title: Joi.string().required().min(1).max(200),
-      data_source: Joi.string().required().min(1).max(100).pattern(/^[a-zA-Z_][a-zA-Z0-9_]*$/),
-      source_type: Joi.string().valid('TABLE', 'VIEW', 'PROCEDURE').default('TABLE'),
+      data_source: Joi.string()
+        .when('source_type', {
+          is: 'CUSTOM_QUERY',
+          then: Joi.string().optional().allow(null, ''),
+          otherwise: Joi.string().required().min(1).max(100).pattern(/^[a-zA-Z_][a-zA-Z0-9_]*$/)
+        }),
+      source_type: Joi.string().valid('TABLE', 'VIEW', 'PROCEDURE', 'CUSTOM_QUERY').default('TABLE'),
       source_params: Joi.array()
         .items(
           Joi.object({
@@ -120,6 +125,67 @@ const pageConfigService = {
       }
     }
 
+    // Validate SQL if it's a CUSTOM_QUERY type with custom_query
+    if (data.source_type === 'CUSTOM_QUERY' && Array.isArray(data.source_params)) {
+      const customQueryParam = data.source_params.find(p => p && p.name === 'custom_query');
+      if (!customQueryParam || !customQueryParam.value || !customQueryParam.value.trim()) {
+        throw fromCode('VALIDATION_ERROR', ['custom_query parameter is required for CUSTOM_QUERY source type']);
+      }
+      
+      const sqlValue = customQueryParam.value.trim();
+      
+      // Check for WHERE clause and reject it
+      if (/\bWHERE\b/i.test(sqlValue)) {
+        throw fromCode('VALIDATION_ERROR', [
+          'Custom queries cannot contain WHERE clauses. Use the Filter/Search UI instead.',
+          'Your query should focus on JOINs, aggregations, and data structure. Filtering is handled by the system.'
+        ]);
+      }
+      
+      // Check for LIMIT clause and reject it
+      if (/\bLIMIT\b/i.test(sqlValue)) {
+        throw fromCode('VALIDATION_ERROR', [
+          'Custom queries cannot contain LIMIT clauses. Pagination is handled by the system using the page size from UI.',
+          'Remove LIMIT from your query - the system will apply pagination automatically.'
+        ]);
+      }
+      
+      // Check for OFFSET clause and reject it
+      if (/\bOFFSET\b/i.test(sqlValue)) {
+        throw fromCode('VALIDATION_ERROR', [
+          'Custom queries cannot contain OFFSET clauses. Pagination is handled by the system using the page size from UI.',
+          'Remove OFFSET from your query - the system will apply pagination automatically.'
+        ]);
+      }
+      
+      // Check for SQL Server pagination syntax
+      if (/\bFETCH\s+NEXT\b/i.test(sqlValue) || /\bROWS\s+FETCH\s+NEXT\b/i.test(sqlValue)) {
+        throw fromCode('VALIDATION_ERROR', [
+          'Custom queries cannot contain FETCH NEXT clauses. Pagination is handled by the system using the page size from UI.',
+          'Remove FETCH NEXT from your query - the system will apply pagination automatically.'
+        ]);
+      }
+      
+      // Check for parameter placeholders (reject ALL parameters, including system params)
+      const paramMatches = sqlValue.matchAll(/:([a-zA-Z_][a-zA-Z0-9_]*)/g);
+      for (const match of paramMatches) {
+        const paramName = match[1];
+        throw fromCode('VALIDATION_ERROR', [
+          `Custom queries cannot use parameters like :${paramName}. Pagination is handled automatically by the system.`,
+          'Remove all parameters from your query - filtering and pagination are handled by the UI.'
+        ]);
+      }
+      
+      const username = user?.username || null;
+      await validateProcedureSql(sqlValue, {
+        checkReadOnly: true,
+        checkComplexity: true,
+        maxTimeout: 30000,
+        username: username,
+        sourceType: 'CUSTOM_QUERY'
+      });
+    }
+
     // Check if page_key already exists (only if provided by user)
     if (payload.page_key) {
       const existing = await PageConfig.findOne({
@@ -167,8 +233,13 @@ const pageConfigService = {
     const schema = Joi.object({
       title: Joi.string().min(1).max(200),
       organization_id: Joi.string().allow(null, '').optional(),
-      data_source: Joi.string().min(1).max(100).pattern(/^[a-zA-Z_][a-zA-Z0-9_]*$/),
-      source_type: Joi.string().valid('TABLE', 'VIEW', 'PROCEDURE'),
+      data_source: Joi.string()
+        .when('source_type', {
+          is: 'CUSTOM_QUERY',
+          then: Joi.string().optional().allow(null, ''),
+          otherwise: Joi.string().min(1).max(100).pattern(/^[a-zA-Z_][a-zA-Z0-9_]*$/)
+        }),
+      source_type: Joi.string().valid('TABLE', 'VIEW', 'PROCEDURE', 'CUSTOM_QUERY'),
       source_params: Joi.array()
         .items(
           Joi.object({
@@ -222,6 +293,67 @@ const pageConfigService = {
           username: username
         });
       }
+    }
+
+    // Validate SQL if updating to CUSTOM_QUERY type with custom_query
+    if (data.source_type === 'CUSTOM_QUERY' && Array.isArray(data.source_params)) {
+      const customQueryParam = data.source_params.find(p => p && p.name === 'custom_query');
+      if (!customQueryParam || !customQueryParam.value || !customQueryParam.value.trim()) {
+        throw fromCode('VALIDATION_ERROR', ['custom_query parameter is required for CUSTOM_QUERY source type']);
+      }
+      
+      const sqlValue = customQueryParam.value.trim();
+      
+      // Check for WHERE clause and reject it
+      if (/\bWHERE\b/i.test(sqlValue)) {
+        throw fromCode('VALIDATION_ERROR', [
+          'Custom queries cannot contain WHERE clauses. Use the Filter/Search UI instead.',
+          'Your query should focus on JOINs, aggregations, and data structure. Filtering is handled by the system.'
+        ]);
+      }
+      
+      // Check for LIMIT clause and reject it
+      if (/\bLIMIT\b/i.test(sqlValue)) {
+        throw fromCode('VALIDATION_ERROR', [
+          'Custom queries cannot contain LIMIT clauses. Pagination is handled by the system using the page size from UI.',
+          'Remove LIMIT from your query - the system will apply pagination automatically.'
+        ]);
+      }
+      
+      // Check for OFFSET clause and reject it
+      if (/\bOFFSET\b/i.test(sqlValue)) {
+        throw fromCode('VALIDATION_ERROR', [
+          'Custom queries cannot contain OFFSET clauses. Pagination is handled by the system using the page size from UI.',
+          'Remove OFFSET from your query - the system will apply pagination automatically.'
+        ]);
+      }
+      
+      // Check for SQL Server pagination syntax
+      if (/\bFETCH\s+NEXT\b/i.test(sqlValue) || /\bROWS\s+FETCH\s+NEXT\b/i.test(sqlValue)) {
+        throw fromCode('VALIDATION_ERROR', [
+          'Custom queries cannot contain FETCH NEXT clauses. Pagination is handled by the system using the page size from UI.',
+          'Remove FETCH NEXT from your query - the system will apply pagination automatically.'
+        ]);
+      }
+      
+      // Check for parameter placeholders (reject ALL parameters, including system params)
+      const paramMatches = sqlValue.matchAll(/:([a-zA-Z_][a-zA-Z0-9_]*)/g);
+      for (const match of paramMatches) {
+        const paramName = match[1];
+        throw fromCode('VALIDATION_ERROR', [
+          `Custom queries cannot use parameters like :${paramName}. Pagination is handled automatically by the system.`,
+          'Remove all parameters from your query - filtering and pagination are handled by the UI.'
+        ]);
+      }
+      
+      const username = user?.username || null;
+      await validateProcedureSql(sqlValue, {
+        checkReadOnly: true,
+        checkComplexity: true,
+        maxTimeout: 30000,
+        username: username,
+        sourceType: 'CUSTOM_QUERY'
+      });
     }
 
     const txn = await masterDb.transaction();

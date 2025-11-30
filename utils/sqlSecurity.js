@@ -22,13 +22,22 @@ const ALLOWED_KEYWORDS = [
   'MAX', 'MIN', 'CAST', 'CONVERT', 'TOP', 'FETCH', 'NEXT', 'ROWS', 'ONLY'
 ];
 
-// Maximum query complexity limits
+// Maximum query complexity limits for PROCEDURE
 const COMPLEXITY_LIMITS = {
   maxJoins: 10,
   maxSubqueries: 5,
   maxCTEs: 3,
   maxUnionClauses: 5,
   maxLength: 50000 // Maximum SQL length in characters
+};
+
+// Higher limits for CUSTOM_QUERY (allows more complex queries)
+const CUSTOM_QUERY_LIMITS = {
+  maxJoins: 20,
+  maxSubqueries: 10,
+  maxCTEs: 5,
+  maxUnionClauses: 10,
+  maxLength: 100000 // Maximum SQL length in characters
 };
 
 /**
@@ -55,16 +64,18 @@ function containsDangerousKeywords(sql) {
 
 /**
  * Validate SQL query complexity
+ * @param {string} sql - SQL query to validate
+ * @param {object} limits - Complexity limits to use (defaults to COMPLEXITY_LIMITS)
  */
-function validateQueryComplexity(sql) {
+function validateQueryComplexity(sql, limits = COMPLEXITY_LIMITS) {
   if (!sql || typeof sql !== 'string') {
     throw fromCode('PAGE_CONFIG_INVALID', ['SQL query is required']);
   }
 
   // Check length
-  if (sql.length > COMPLEXITY_LIMITS.maxLength) {
+  if (sql.length > limits.maxLength) {
     throw fromCode('PAGE_CONFIG_INVALID', [
-      `SQL query exceeds maximum length of ${COMPLEXITY_LIMITS.maxLength} characters`
+      `SQL query exceeds maximum length of ${limits.maxLength} characters`
     ]);
   }
 
@@ -72,34 +83,34 @@ function validateQueryComplexity(sql) {
 
   // Count JOINs
   const joinCount = (upperSql.match(/\bJOIN\b/g) || []).length;
-  if (joinCount > COMPLEXITY_LIMITS.maxJoins) {
+  if (joinCount > limits.maxJoins) {
     throw fromCode('PAGE_CONFIG_INVALID', [
-      `Query contains ${joinCount} joins, maximum allowed is ${COMPLEXITY_LIMITS.maxJoins}`
+      `Query contains ${joinCount} joins, maximum allowed is ${limits.maxJoins}`
     ]);
   }
 
   // Count subqueries (SELECT within parentheses)
   const subqueryPattern = /\([^)]*SELECT[^)]*\)/gi;
   const subqueryMatches = sql.match(subqueryPattern) || [];
-  if (subqueryMatches.length > COMPLEXITY_LIMITS.maxSubqueries) {
+  if (subqueryMatches.length > limits.maxSubqueries) {
     throw fromCode('PAGE_CONFIG_INVALID', [
-      `Query contains ${subqueryMatches.length} subqueries, maximum allowed is ${COMPLEXITY_LIMITS.maxSubqueries}`
+      `Query contains ${subqueryMatches.length} subqueries, maximum allowed is ${limits.maxSubqueries}`
     ]);
   }
 
   // Count CTEs (WITH clauses)
   const cteCount = (upperSql.match(/\bWITH\s+\w+\s+AS\s*\(/g) || []).length;
-  if (cteCount > COMPLEXITY_LIMITS.maxCTEs) {
+  if (cteCount > limits.maxCTEs) {
     throw fromCode('PAGE_CONFIG_INVALID', [
-      `Query contains ${cteCount} CTEs, maximum allowed is ${COMPLEXITY_LIMITS.maxCTEs}`
+      `Query contains ${cteCount} CTEs, maximum allowed is ${limits.maxCTEs}`
     ]);
   }
 
   // Count UNION clauses
   const unionCount = (upperSql.match(/\bUNION\b/g) || []).length;
-  if (unionCount > COMPLEXITY_LIMITS.maxUnionClauses) {
+  if (unionCount > limits.maxUnionClauses) {
     throw fromCode('PAGE_CONFIG_INVALID', [
-      `Query contains ${unionCount} UNION clauses, maximum allowed is ${COMPLEXITY_LIMITS.maxUnionClauses}`
+      `Query contains ${unionCount} UNION clauses, maximum allowed is ${limits.maxUnionClauses}`
     ]);
   }
 
@@ -161,6 +172,7 @@ function sanitizeSql(sql) {
  * @param {object} options - Validation options
  * @param {string} options.userId - User ID for blocking on dangerous SQL (optional)
  * @param {string} options.username - Username for blocking on dangerous SQL (optional)
+ * @param {string} options.sourceType - Source type ('PROCEDURE' or 'CUSTOM_QUERY') to determine limits
  */
 async function validateProcedureSql(sql, options = {}) {
   const {
@@ -168,7 +180,8 @@ async function validateProcedureSql(sql, options = {}) {
     checkComplexity = true,
     maxTimeout = 30000, // 30 seconds default
     userId = null,
-    username = null
+    username = null,
+    sourceType = 'PROCEDURE'
   } = options;
 
   if (!sql || typeof sql !== 'string' || !sql.trim()) {
@@ -207,9 +220,10 @@ async function validateProcedureSql(sql, options = {}) {
     validateReadOnly(sanitized);
   }
 
-  // Validate complexity
+  // Validate complexity (use higher limits for CUSTOM_QUERY)
   if (checkComplexity) {
-    validateQueryComplexity(sanitized);
+    const limits = sourceType === 'CUSTOM_QUERY' ? CUSTOM_QUERY_LIMITS : COMPLEXITY_LIMITS;
+    validateQueryComplexity(sanitized, limits);
   }
 
   return {
@@ -227,6 +241,7 @@ module.exports = {
   sanitizeSql,
   DANGEROUS_KEYWORDS,
   ALLOWED_KEYWORDS,
-  COMPLEXITY_LIMITS
+  COMPLEXITY_LIMITS,
+  CUSTOM_QUERY_LIMITS
 };
 

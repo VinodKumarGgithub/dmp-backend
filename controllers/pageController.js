@@ -276,14 +276,39 @@ module.exports = {
     }
   },
 
-  // POST /api/pages/:pageKey/test-query (test p_sql query)
+  // POST /api/pages/:pageKey/detect-columns-enhanced (for CUSTOM_QUERY with metadata analysis)
+  async detectColumnsEnhanced(req, res, next) {
+    try {
+      if (!req.db || !req.db.sequelize) {
+        return next(fromCode('TENANT_DB_NOT_AVAILABLE'));
+      }
+
+      const { custom_query } = req.body || {};
+      const trimmedSql = typeof custom_query === 'string' ? custom_query.trim() : '';
+
+      if (!trimmedSql) {
+        return next(fromCode('PAGE_CONFIG_INVALID', ['custom_query is required']));
+      }
+
+      const result = await pageService.detectColumnsWithMetadata(trimmedSql, req.db.sequelize);
+      res.json(success(result, 'Columns and recommendations detected successfully'));
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // POST /api/pages/:pageKey/test-query (test p_sql or custom_query)
   async testQuery(req, res, next) {
     try {
       const { pageKey } = req.params;
-      const { p_sql, queryParams = {} } = req.body;
+      const { p_sql, custom_query, queryParams = {} } = req.body;
 
-      if (!p_sql || typeof p_sql !== 'string' || !p_sql.trim()) {
-        return next(fromCode('VALIDATION_ERROR', ['p_sql is required']));
+      // Support both p_sql (PROCEDURE) and custom_query (CUSTOM_QUERY)
+      const sqlValue = custom_query || p_sql;
+      const sourceType = custom_query ? 'CUSTOM_QUERY' : 'PROCEDURE';
+
+      if (!sqlValue || typeof sqlValue !== 'string' || !sqlValue.trim()) {
+        return next(fromCode('VALIDATION_ERROR', [custom_query ? 'custom_query is required' : 'p_sql is required']));
       }
 
       if (!req.db || !req.db.sequelize) {
@@ -302,12 +327,13 @@ module.exports = {
           throw fromCode('PAGE_NOT_FOUND', ['Page config not found']);
         }
       } catch (error) {
-        // If page doesn't exist or is 'test', create a minimal config for testing
-        // This allows testing queries before saving the page config
+        // Create minimal config for testing
         config = {
           page_key: pageKey || 'test',
-          source_type: 'PROCEDURE',
-          source_params: [{ name: 'p_sql', value: p_sql }],
+          source_type: sourceType,
+          source_params: sourceType === 'CUSTOM_QUERY' 
+            ? [{ name: 'custom_query', value: custom_query }]
+            : [{ name: 'p_sql', value: p_sql }],
           columns: [],
           searchable_fields: [],
           filterable_fields: [],
@@ -315,39 +341,47 @@ module.exports = {
           page_size_default: 20,
           is_download_allowed: false,
           download_row_limit: null,
-          data_source: 'test' // Required field for buildQuery
+          data_source: sourceType === 'CUSTOM_QUERY' ? null : 'test'
         };
       }
       
-      // Ensure source_params includes the p_sql being tested
+      // Update source_params with the SQL being tested
       if (!config.source_params || !Array.isArray(config.source_params)) {
         config.source_params = [];
       }
       
-      // Update or add p_sql in source_params
-      const pSqlIndex = config.source_params.findIndex(p => p && p.name === 'p_sql');
-      if (pSqlIndex >= 0) {
-        config.source_params[pSqlIndex].value = p_sql;
+      if (sourceType === 'CUSTOM_QUERY') {
+        const customQueryIndex = config.source_params.findIndex(p => p && p.name === 'custom_query');
+        if (customQueryIndex >= 0) {
+          config.source_params[customQueryIndex].value = custom_query;
+        } else {
+          config.source_params.push({ name: 'custom_query', value: custom_query });
+        }
       } else {
-        config.source_params.push({ name: 'p_sql', value: p_sql });
+        const pSqlIndex = config.source_params.findIndex(p => p && p.name === 'p_sql');
+        if (pSqlIndex >= 0) {
+          config.source_params[pSqlIndex].value = p_sql;
+        } else {
+          config.source_params.push({ name: 'p_sql', value: p_sql });
+        }
       }
 
-      // Validate SQL before building query (with user blocking on dangerous SQL)
+      // Validate SQL
       const { validateProcedureSql } = require('../utils/sqlSecurity');
       const username = req.user?.username || null;
       try {
-        await validateProcedureSql(p_sql, {
+        await validateProcedureSql(sqlValue, {
           checkReadOnly: true,
           checkComplexity: true,
           maxTimeout: 30000,
-          username: username
+          username: username,
+          sourceType: sourceType
         });
       } catch (validationError) {
-        // Re-throw validation errors (user may have been blocked)
         return next(validationError);
       }
 
-      // Build the query with test parameters
+      // Build and execute query
       const startTime = Date.now();
       let executionTime = 0;
       let rowCount = 0;
@@ -356,25 +390,50 @@ module.exports = {
       let data = [];
 
       try {
-        const procedureQuery = await pageService.buildProcedureSql(
-          config,
-          queryParams,
-          req.db.sequelize,
-          { pagination: true, limitOverride: 1 },
-          p_sql
-        );
-
-        previewSql = procedureQuery.sql;
-
-        // Execute with LIMIT 1 for preview
-        const result = await req.db.sequelize.query(procedureQuery.sql, {
-          replacements: procedureQuery.replacements,
-          type: req.db.sequelize.QueryTypes.SELECT,
-          timeout: 30000
-        });
+        let queryResult;
+        
+        if (sourceType === 'CUSTOM_QUERY') {
+          // For testing, force pageSize to 1 and page to 1
+          const testQueryParams = {
+            ...queryParams,
+            pageSize: 1,
+            page: 1
+          };
+          
+          // Use buildCustomQuery for CUSTOM_QUERY with forced LIMIT 1 for testing
+          queryResult = await pageService.buildCustomQuery(
+            config,
+            testQueryParams,
+            req.db.sequelize
+          );
+          previewSql = queryResult.sql;
+          
+          // Execute the query (buildCustomQuery already applied LIMIT 1 via testQueryParams)
+          const result = await req.db.sequelize.query(queryResult.sql, {
+            replacements: queryResult.replacements,
+            type: req.db.sequelize.QueryTypes.SELECT,
+            timeout: 30000
+          });
+          data = Array.isArray(result) ? result : [];
+        } else {
+          // Existing PROCEDURE logic
+          const procedureQuery = await pageService.buildProcedureSql(
+            config,
+            queryParams,
+            req.db.sequelize,
+            { pagination: true, limitOverride: 1 },
+            p_sql
+          );
+          previewSql = procedureQuery.sql;
+          const result = await req.db.sequelize.query(procedureQuery.sql, {
+            replacements: procedureQuery.replacements,
+            type: req.db.sequelize.QueryTypes.SELECT,
+            timeout: 30000
+          });
+          data = Array.isArray(result) ? result : [];
+        }
 
         executionTime = Date.now() - startTime;
-        data = Array.isArray(result) ? result : [];
         rowCount = data.length;
       } catch (queryError) {
         executionTime = Date.now() - startTime;
