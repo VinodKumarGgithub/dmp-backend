@@ -11,14 +11,20 @@ module.exports = {
       }
       const userId = req.user?.userId || req.user?.id;
       
-      // Use user's organization_id (not tenant context)
-      // For SUPER_ADMIN, they can use tenant context if needed, but typically use their own org
-      const organizationId = req.user?.role === 'SUPER_ADMIN' 
-        ? (req.db?.organizationId || req.user?.organization_id) 
-        : (req.user?.organization_id || req.db?.organizationId);
+      if (!userId) {
+        return next(fromCode('FORBIDDEN', ['User ID is required']));
+      }
       
-      if (!userId || !organizationId) {
-        return next(fromCode('FORBIDDEN', ['User ID and Organization ID are required']));
+      // For SUPER_ADMIN, use special identifier if no organization_id
+      // For others, require organization_id
+      let organizationId;
+      if (req.user?.role === 'SUPER_ADMIN') {
+        organizationId = req.db?.organizationId || req.user?.organization_id || '__SUPER_ADMIN__';
+      } else {
+        organizationId = req.user?.organization_id || req.db?.organizationId;
+        if (!organizationId) {
+          return next(fromCode('FORBIDDEN', ['Organization ID is required']));
+        }
       }
 
       // Validate organization access for non-SUPER_ADMIN
@@ -41,14 +47,20 @@ module.exports = {
       }
       const userId = req.user?.userId || req.user?.id;
       
-      // Use user's organization_id (not tenant context)
-      // For SUPER_ADMIN, they can use tenant context if needed, but typically use their own org
-      const organizationId = req.user?.role === 'SUPER_ADMIN' 
-        ? (req.db?.organizationId || req.user?.organization_id) 
-        : (req.user?.organization_id || req.db?.organizationId);
+      if (!userId) {
+        return next(fromCode('FORBIDDEN', ['User ID is required']));
+      }
       
-      if (!userId || !organizationId) {
-        return next(fromCode('FORBIDDEN', ['User ID and Organization ID are required']));
+      // For SUPER_ADMIN, use special identifier if no organization_id
+      // For others, require organization_id
+      let organizationId;
+      if (req.user?.role === 'SUPER_ADMIN') {
+        organizationId = req.db?.organizationId || req.user?.organization_id || '__SUPER_ADMIN__';
+      } else {
+        organizationId = req.user?.organization_id || req.db?.organizationId;
+        if (!organizationId) {
+          return next(fromCode('FORBIDDEN', ['Organization ID is required']));
+        }
       }
 
       // Validate organization access for non-SUPER_ADMIN

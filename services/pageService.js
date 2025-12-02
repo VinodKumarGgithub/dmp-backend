@@ -1228,7 +1228,7 @@ const pageService = {
                 // For textarea, default to LIKE (contains)
                 where.push(`${escapedField} LIKE :${paramKey}`);
                 replacements[paramKey] = `%${String(value)}%`;
-                break;
+            break;
           default:
             where.push(`${escapedField} = :${paramKey}`);
             replacements[paramKey] = value;
@@ -2795,8 +2795,8 @@ const pageService = {
       
       try {
         dataRows = await tenantSequelize.query(dataSql, {
-          type: tenantSequelize.QueryTypes.SELECT
-        });
+        type: tenantSequelize.QueryTypes.SELECT
+      });
       } catch (queryError) {
         executionSuccess = false;
         errorMessage = queryError.message || String(queryError);
@@ -2881,12 +2881,12 @@ const pageService = {
       let dataRows = [];
       
       try {
-        // Execute query using req.db.sequelize.query to get all data
-        // Sequelize query returns [results, metadata], so we destructure to get the results
+      // Execute query using req.db.sequelize.query to get all data
+      // Sequelize query returns [results, metadata], so we destructure to get the results
         dataRows = await tenantSequelize.query(dataSql, {
-          replacements,
-          type: tenantSequelize.QueryTypes.SELECT
-        });
+        replacements,
+        type: tenantSequelize.QueryTypes.SELECT
+      });
       } catch (queryError) {
         executionSuccess = false;
         errorMessage = queryError.message || String(queryError);
