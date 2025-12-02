@@ -7,23 +7,91 @@ const { logger } = require('../config/logger');
  * Tracks usage metrics in ClickHouse for analytics and license compliance
  */
 class UsageTrackingService {
+  // Batch queue for metrics
+  static batchQueue = [];
+  static batchSize = 100; // Flush when batch reaches this size
+  static flushInterval = 5000; // Flush every 5 seconds
+  static flushTimer = null;
+  static isFlushing = false;
+
   /**
-   * Track usage metric (async, non-blocking, fire-and-forget)
+   * Initialize batching (called once on startup)
+   */
+  static initialize() {
+    if (this.flushTimer) {
+      return; // Already initialized
+    }
+    
+    // Start periodic flush timer
+    this.flushTimer = setInterval(() => {
+      this.flushBatch();
+    }, this.flushInterval);
+    
+    // Flush on process exit
+    process.on('SIGTERM', () => this.flushBatch());
+    process.on('SIGINT', () => this.flushBatch());
+  }
+
+  /**
+   * Flush batch to ClickHouse
+   */
+  static async flushBatch() {
+    if (this.isFlushing || this.batchQueue.length === 0) {
+      return;
+    }
+
+    this.isFlushing = true;
+    const batch = this.batchQueue.splice(0, this.batchSize); // Take up to batchSize items
+    
+    if (batch.length === 0) {
+      this.isFlushing = false;
+      return;
+    }
+
+    try {
+      const client = getClickHouseClient();
+      if (!client) {
+        // ClickHouse not available - graceful degradation
+        if (process.env.NODE_ENV === 'development') {
+          console.warn('ClickHouse not available, skipping usage tracking batch');
+        }
+        this.isFlushing = false;
+        return;
+      }
+
+      await client.insert({
+        table: 'analytics.usage_metrics',
+        values: batch,
+        format: 'JSONEachRow'
+      });
+
+      if (process.env.NODE_ENV === 'development') {
+        logger.debug(`Flushed ${batch.length} usage metrics to ClickHouse`);
+      }
+    } catch (error) {
+      // Don't throw - tracking failures shouldn't break main flow
+      // Only log in dev mode to avoid production noise
+      if (process.env.NODE_ENV === 'development') {
+        logger.warn('Failed to flush usage metrics batch:', error.message);
+      }
+    } finally {
+      this.isFlushing = false;
+      
+      // If there are more items in queue, flush again
+      if (this.batchQueue.length > 0) {
+        setImmediate(() => this.flushBatch());
+      }
+    }
+  }
+
+  /**
+   * Track usage metric (async, non-blocking, fire-and-forget with batching)
    * @param {Object} metricData
    */
   static async trackMetric(metricData) {
     // Fire-and-forget: use setImmediate for non-blocking
-    setImmediate(async () => {
+    setImmediate(() => {
       try {
-        const client = getClickHouseClient();
-        if (!client) {
-          // ClickHouse not available - graceful degradation
-          if (process.env.NODE_ENV === 'development') {
-            console.warn('ClickHouse not available, skipping usage tracking');
-          }
-          return;
-        }
-
         const {
           organizationId,
           tenantId,
@@ -71,16 +139,18 @@ class UsageTrackingService {
           event_time: eventTime
         };
 
-        await client.insert({
-          table: 'analytics.usage_metrics',  // Use fully qualified table name
-          values: [insertData],
-          format: 'JSONEachRow'
-        });
+        // Add to batch queue
+        this.batchQueue.push(insertData);
+
+        // Flush if batch size reached
+        if (this.batchQueue.length >= this.batchSize) {
+          this.flushBatch();
+        }
       } catch (error) {
         // Don't throw - tracking failures shouldn't break main flow
         // Only log in dev mode to avoid production noise
         if (process.env.NODE_ENV === 'development') {
-          logger.warn('Failed to track usage metric:', error.message);
+          logger.warn('Failed to queue usage metric:', error.message);
         }
       }
     });
@@ -376,6 +446,9 @@ class UsageTrackingService {
     }
   }
 }
+
+// Initialize batching on module load
+UsageTrackingService.initialize();
 
 module.exports = UsageTrackingService;
 

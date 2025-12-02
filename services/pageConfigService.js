@@ -4,6 +4,7 @@ const { fromCode } = require('../utils/errors');
 const { mapDbError } = require('../utils/dbErrorMapper');
 const { PageConfig } = require('../models/PageConfig');
 const { validateProcedureSql } = require('../utils/sqlSecurity');
+const { cacheService } = require('./cacheService');
 
 const pageConfigService = {
   // Create new page config
@@ -232,6 +233,11 @@ const pageConfigService = {
       );
 
       await txn.commit();
+      
+      // Invalidate cache for this page
+      await cacheService.delPattern(`page:config:${data.page_key}:*`);
+      await cacheService.delPattern(`page:data:${data.page_key}:*`);
+      
       return pageConfig;
     } catch (error) {
       await txn.rollback();
@@ -408,6 +414,11 @@ const pageConfigService = {
 
       await pageConfig.update(updateData, { transaction: txn });
       await txn.commit();
+      
+      // Invalidate cache for this page
+      await cacheService.delPattern(`page:config:${pageKey}:*`);
+      await cacheService.delPattern(`page:data:${pageKey}:*`);
+      
       return pageConfig;
     } catch (error) {
       await txn.rollback();
@@ -431,6 +442,11 @@ const pageConfigService = {
 
       await pageConfig.destroy({ transaction: txn });
       await txn.commit();
+      
+      // Invalidate cache for this page
+      await cacheService.delPattern(`page:config:${pageKey}:*`);
+      await cacheService.delPattern(`page:data:${pageKey}:*`);
+      
       return { message: 'Page config deleted successfully' };
     } catch (error) {
       await txn.rollback();

@@ -1,5 +1,6 @@
 const { masterSequelize } = require('./db');
 const { logger } = require('./logger');
+const { testRedisConnection: testRedis } = require('./redis');
 
 const { AdminUser } = require('../models/AdminUser');
 const { Tenant } = require('../models/Tenant');
@@ -25,4 +26,15 @@ async function testMasterDbConnection() {
   }
 }
 
-module.exports = { testMasterDbConnection };
+async function testRedisConnection() {
+  const result = await testRedis();
+  if (result.connected) {
+    logger.info('✅ Redis connection successful');
+  } else {
+    logger.warn(`⚠️  Redis connection failed: ${result.error || 'Unknown error'}`);
+    logger.warn('⚠️  Application will continue with in-memory caching (not recommended for production)');
+  }
+  return result;
+}
+
+module.exports = { testMasterDbConnection, testRedisConnection };

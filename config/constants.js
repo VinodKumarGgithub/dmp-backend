@@ -13,13 +13,25 @@ module.exports = {
       TENANT_NOT_FOUND: "Tenant DB not found"
     },
     DB_POOL: {
-        MIN: 10,
-        MAX: 100,
-        ACQUIRE: 30000,
-        IDLE: 10000,
+        MIN: 5,              // Reduced from 10 (lower memory per instance)
+        MAX: 20,             // Reduced from 100 (per PM2 instance, not per tenant)
+        ACQUIRE: 10000,      // Reduced from 30000 (faster timeout)
+        IDLE: 5000,          // Reduced from 10000 (faster cleanup)
+        EVICT: 1000,         // Connection eviction check interval (ms)
     },
     REDIS: {
         URL: process.env.REDIS_URL || 'redis://localhost:6379',
+        CLUSTER: process.env.REDIS_CLUSTER === 'true',
+        NODES: process.env.REDIS_NODES ? JSON.parse(process.env.REDIS_NODES) : null,
+        PASSWORD: process.env.REDIS_PASSWORD || null,
+    },
+    CACHE: {
+        TENANT_CONFIG_TTL: 3600,        // 1 hour (seconds)
+        TENANT_STATUS_TTL: 7200,        // 2 hours (seconds)
+        PAGE_CONFIG_TTL: 3600,          // 1 hour (seconds)
+        PAGE_DATA_TTL: 300,             // 5 minutes (seconds)
+        METADATA_TTL: 1800,             // 30 minutes (seconds)
+        QUERY_RESULT_TTL: 300,          // 5 minutes (seconds)
     },
     RATE_LIMIT: {
         WINDOW: 60000,      // 1 minute

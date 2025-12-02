@@ -8,7 +8,7 @@ const compress = require('compression');
 const { logger } = require('./config/logger');
 const routes = require('./routes');
 const { errorHandler } = require('./middleware/errorHandler');
-const { testMasterDbConnection } = require('./config/startup');
+const { testMasterDbConnection, testRedisConnection } = require('./config/startup');
 const { health } = require('./controllers/healthController');
 
 const app = express();
@@ -34,7 +34,7 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
 // Serve static files from public directory
-app.use(express.static('public'));
+// app.use(express.static('public'));
 
 app.get('/health', health);
 
@@ -52,6 +52,7 @@ const PORT = process.env.PORT || 4000;
 
 (async () => {
   await testMasterDbConnection(); // test master DB connection before starting API
+  await testRedisConnection(); // test Redis connection (non-blocking, graceful degradation)
 
   app.listen(PORT, () => {
     logger.info(`🚀 Server running on port ${PORT}`);

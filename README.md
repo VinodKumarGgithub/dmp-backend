@@ -21,16 +21,88 @@ This HTML interface provides a modern, user-friendly way to manage tenants and t
 
 ## 🚀 **Getting Started**
 
-### 1. **Start the Server**
+### 1. **Environment Variables**
+
+Create a `.env` file based on `.env.example`:
+
 ```bash
-cd mbx-pbm
-npm start
+cp .env.example .env
 ```
 
-### 2. **Access the Interface**
+Then update the values in `.env` with your actual configuration.
+
+#### **Required Variables**
+- `MASTER_DB_URL` - Master database connection string (REQUIRED)
+- `JWT_SECRET` - JWT secret for authentication (REQUIRED in production)
+- `TENANT_CREDENTIALS_ENCRYPTION_KEY` - Encryption key for tenant credentials (REQUIRED in production)
+
+#### **Redis Configuration (Optional but Highly Recommended)**
+- `REDIS_URL` - Redis connection string (default: `redis://localhost:6379`)
+- `REDIS_CLUSTER` - Enable Redis cluster mode (`true`/`false`, default: `false`)
+- `REDIS_NODES` - JSON array of cluster nodes (only if `REDIS_CLUSTER=true`)
+- `REDIS_PASSWORD` - Redis password (optional)
+
+**Note**: Redis is used for distributed caching and rate limiting. The application will work without Redis (with in-memory fallback), but Redis is **required for production** to achieve 1M+ RPS.
+
+#### **Database Configuration**
+- `MASTER_DB_READ_REPLICA_URL` - Read replica for master DB (optional, recommended for production)
+  - Reduces load on primary database
+  - Used for tenant lookups and read operations
+
+#### **ClickHouse Configuration (Optional)**
+- `CLICKHOUSE_HOST` - ClickHouse server URL (default: `http://localhost:8123`)
+- `CLICKHOUSE_DATABASE` - ClickHouse database name (default: `analytics`)
+- `CLICKHOUSE_USER` - ClickHouse username (default: `admin`)
+- `CLICKHOUSE_PASSWORD` - ClickHouse password (default: `admin123`)
+
+**Note**: ClickHouse is used for analytics and usage tracking. Application works without it (graceful degradation).
+
+#### **Other Configuration**
+- `NODE_ENV` - Environment (`development`/`production`, default: `development`)
+- `PORT` - Server port (default: `4000`)
+- `CORS_ORIGIN` - CORS allowed origin (default: `*`)
+- `LOG_ENCRYPTION_KEY` - Key for log encryption (optional)
+- `ORG_DEFAULT_PRIMARY_COLOR` - Default primary color for organizations (default: `#1890ff`)
+- `ORG_ID_GENERATION_MODE` - Organization ID generation: `slug`, `uuid`, or `time` (default: `slug`)
+- `BRANDING_CACHE_TTL` - Branding cache TTL in milliseconds (default: `600000`)
+
+See `.env.example` for complete list of all environment variables.
+
+### 2. **Redis Setup**
+
+Redis is used for distributed caching and rate limiting. The application will work without Redis (with in-memory fallback), but Redis is **highly recommended** for production.
+
+#### **Single Instance Redis**
+```bash
+# Install Redis (Ubuntu/Debian)
+sudo apt-get install redis-server
+
+# Start Redis
+redis-server
+
+# Or use Docker
+docker run -d -p 6379:6379 redis:latest
+```
+
+#### **Redis Cluster (for high availability)**
+Set `REDIS_CLUSTER=true` and provide `REDIS_NODES` as a JSON array.
+
+### 3. **Install Dependencies**
+```bash
+npm install
+```
+
+### 4. **Start the Server**
+```bash
+npm start
+# or for development
+npm run dev
+```
+
+### 5. **Access the Interface**
 Open your browser and navigate to:
 ```
-http://localhost:3000
+http://localhost:4000
 ```
 
 ### 3. **API Endpoints Used**
@@ -120,5 +192,18 @@ The interface automatically:
 - Database operations use transactions for data integrity
 - The interface connects to your existing API endpoints
 - No additional configuration required beyond starting the server
+
+## 🚀 **Performance Optimization**
+
+This application is optimized for high throughput (1M+ requests/second). Key optimizations include:
+
+- **Redis Caching**: Distributed caching for tenant configs, page configs, and query results
+- **Connection Pooling**: Optimized database connection pools for low-spec VMs
+- **Read Replicas**: Support for database read replicas to reduce primary DB load
+- **Query Result Caching**: Automatic caching of query results with configurable TTLs
+- **Batched Operations**: Batched inserts for usage tracking and async operations
+- **Distributed Rate Limiting**: Redis-based rate limiting across all instances
+
+For detailed performance tuning guide, see [docs/PERFORMANCE_OPTIMIZATION.md](./docs/PERFORMANCE_OPTIMIZATION.md).
 
 

@@ -5,6 +5,8 @@ const { dbMetadataService } = require('./dbMetadataService');
 const { validateProcedureSql } = require('../utils/sqlSecurity');
 const { Op } = require('sequelize');
 const UsageTrackingService = require('./usageTrackingService');
+const { cacheService } = require('./cacheService');
+const { CACHE } = require('../config/constants');
 const crypto = require('crypto');
 const LOG_ENCRYPTION_KEY = process.env.LOG_ENCRYPTION_KEY || '';
 const getEncryptionKey = () => {
@@ -880,6 +882,15 @@ const pageService = {
       throw fromCode('VALIDATION_ERROR', ['Page key is required and must be a string']);
     }
 
+    // Generate cache key (include access context for security)
+    const cacheKey = cacheService.key('page', 'config', pageKey, tenantId || 'all', userRole || 'user', organizationId || 'all');
+    
+    // Try cache first
+    const cached = await cacheService.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
     try {
       const page = await PageConfig.findOne({ where: { page_key: pageKey } });
       if (!page) {
@@ -892,7 +903,7 @@ const pageService = {
       }
 
       try {
-        return {
+        const config = {
           id: page.id,
           page_key: page.page_key,
           title: page.title,
@@ -907,6 +918,11 @@ const pageService = {
           default_sort: parseJsonField(page.default_sort_json, null),
           page_size_default: page.page_size_default
         };
+        
+        // Cache config (1 hour TTL)
+        await cacheService.set(cacheKey, config, CACHE.PAGE_CONFIG_TTL);
+        
+        return config;
       } catch (parseError) {
         // parseJsonField already throws PAGE_CONFIG_INVALID
         throw parseError;
@@ -1990,6 +2006,22 @@ const pageService = {
       rowCount: 0
     };
     const actionType = 'page_data_fetch';
+    
+    // Check if caching should be skipped
+    const skipCache = queryParams.noCache === 'true' || queryParams.noCache === true;
+    
+    // Generate cache key from pageKey + queryParams (exclude noCache param)
+    if (!skipCache) {
+      const cacheParams = { ...queryParams };
+      delete cacheParams.noCache;
+      const cacheKey = cacheService.key('page', 'data', config.page_key, reqDb.tenantId || 'all', JSON.stringify(cacheParams));
+      
+      // Try cache first
+      const cached = await cacheService.get(cacheKey);
+      if (cached) {
+        return cached;
+      }
+    }
 
     // Handle PROCEDURE type
     if (source_type === 'PROCEDURE') {
@@ -2095,7 +2127,17 @@ const pageService = {
           const totalBase = ((pageNum - 1) * (Number.isFinite(pageLimit) ? pageLimit : data.length)) + data.length;
           const total = hasMore ? totalBase + 1 : totalBase;
           performance.rowCount = Array.isArray(data) ? data.length : 0;
-          return { data, total, hasMore, performance };
+          const result = { data, total, hasMore, performance };
+          
+          // Cache result if not skipped
+          if (!skipCache) {
+            const cacheParams = { ...queryParams };
+            delete cacheParams.noCache;
+            const cacheKey = cacheService.key('page', 'data', config.page_key, reqDb.tenantId || 'all', JSON.stringify(cacheParams));
+            await cacheService.set(cacheKey, result, CACHE.PAGE_DATA_TTL);
+          }
+          
+          return result;
         }
 
         // Fallback to executing the stored procedure directly when p_sql is not provided
@@ -2210,8 +2252,17 @@ const pageService = {
         const hasMore = total > offset + pageSize;
         const paginatedData = processedData.slice(offset, offset + pageSize);
         performance.rowCount = paginatedData.length;
-
-        return { data: paginatedData, total, hasMore, performance };
+        const result = { data: paginatedData, total, hasMore, performance };
+        
+        // Cache result if not skipped
+        if (!skipCache) {
+          const cacheParams = { ...queryParams };
+          delete cacheParams.noCache;
+          const cacheKey = cacheService.key('page', 'data', config.page_key, reqDb.tenantId || 'all', JSON.stringify(cacheParams));
+          await cacheService.set(cacheKey, result, CACHE.PAGE_DATA_TTL);
+        }
+        
+        return result;
       } catch (error) {
         if (error.code) throw error;
         throw mapDbError(error);
@@ -2290,12 +2341,22 @@ const pageService = {
         const total = hasMore ? totalBase + 1 : totalBase;
 
         performance.rowCount = data.length;
-        return { 
+        const result = { 
           data, 
           total,
           hasMore,
           performance 
         };
+        
+        // Cache result if not skipped
+        if (!skipCache) {
+          const cacheParams = { ...queryParams };
+          delete cacheParams.noCache;
+          const cacheKey = cacheService.key('page', 'data', config.page_key, reqDb.tenantId || 'all', JSON.stringify(cacheParams));
+          await cacheService.set(cacheKey, result, CACHE.PAGE_DATA_TTL);
+        }
+        
+        return result;
       } catch (error) {
         if (error.code) throw error;
         throw mapDbError(error);
@@ -2389,7 +2450,17 @@ const pageService = {
         const offset = (page - 1) * pageSize;
         data = data.slice(offset, offset + pageSize);
         performance.rowCount = data.length;
-        return { data, total, hasMore: false, performance };
+        const result = { data, total, hasMore: false, performance };
+        
+        // Cache result if not skipped
+        if (!skipCache) {
+          const cacheParams = { ...queryParams };
+          delete cacheParams.noCache;
+          const cacheKey = cacheService.key('page', 'data', config.page_key, reqDb.tenantId || 'all', JSON.stringify(cacheParams));
+          await cacheService.set(cacheKey, result, CACHE.PAGE_DATA_TTL);
+        }
+        
+        return result;
       } else {
         // Normal SQL-based filtering for TABLEs or VIEWs with configured fields
         const baseSql = `FROM ${queryDataSource} ${whereClause}`;
@@ -2470,7 +2541,17 @@ const pageService = {
         }
 
         performance.rowCount = data.length;
-        return { data, total, hasMore: false, performance };
+        const result = { data, total, hasMore: false, performance };
+        
+        // Cache result if not skipped
+        if (!skipCache) {
+          const cacheParams = { ...queryParams };
+          delete cacheParams.noCache;
+          const cacheKey = cacheService.key('page', 'data', config.page_key, reqDb.tenantId || 'all', JSON.stringify(cacheParams));
+          await cacheService.set(cacheKey, result, CACHE.PAGE_DATA_TTL);
+        }
+        
+        return result;
       }
     } catch (error) {
       // If error is already enhanced with context, use it as-is

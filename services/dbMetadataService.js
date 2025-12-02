@@ -1,5 +1,7 @@
 const { fromCode } = require('../utils/errors');
 const { mapDbError } = require('../utils/dbErrorMapper');
+const { cacheService } = require('./cacheService');
+const { CACHE } = require('../config/constants');
 
 const dbMetadataService = {
   /**
@@ -10,6 +12,16 @@ const dbMetadataService = {
   async getTables(sequelize) {
     if (!sequelize) {
       throw fromCode('TENANT_DB_NOT_AVAILABLE', ['Database connection not available']);
+    }
+
+    // Get database name for cache key
+    const dbName = sequelize.config.database || 'unknown';
+    const cacheKey = cacheService.key('metadata', 'tables', dbName);
+    
+    // Try cache first
+    const cached = await cacheService.get(cacheKey);
+    if (cached) {
+      return cached;
     }
 
     try {
@@ -77,10 +89,15 @@ const dbMetadataService = {
       });
 
       // Return array of objects with name and type
-      return results.map(row => ({
+      const tables = results.map(row => ({
         name: row.name,
         type: row.type
       }));
+      
+      // Cache results (30 minutes TTL)
+      await cacheService.set(cacheKey, tables, CACHE.METADATA_TTL);
+      
+      return tables;
     } catch (error) {
       if (error.code) throw error;
       throw mapDbError(error);
@@ -105,6 +122,16 @@ const dbMetadataService = {
     // Validate table/view name to prevent SQL injection
     if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(tableName)) {
       throw fromCode('VALIDATION_ERROR', ['Invalid table or view name format']);
+    }
+
+    // Get database name for cache key
+    const dbName = sequelize.config.database || 'unknown';
+    const cacheKey = cacheService.key('metadata', 'columns', dbName, tableName);
+    
+    // Try cache first
+    const cached = await cacheService.get(cacheKey);
+    if (cached) {
+      return cached;
     }
 
     try {
@@ -145,13 +172,18 @@ const dbMetadataService = {
         replacements: { tableName }
       });
 
-      return results.map(col => ({
+      const columns = results.map(col => ({
         name: col.name,
         type: this.mapDataType(col.type),
         nullable: col.nullable === 'YES',
         default_value: col.default_value,
         max_length: col.max_length
       }));
+      
+      // Cache results (30 minutes TTL)
+      await cacheService.set(cacheKey, columns, CACHE.METADATA_TTL);
+      
+      return columns;
     } catch (error) {
       if (error.code) throw error;
       throw mapDbError(error);
@@ -177,6 +209,16 @@ const dbMetadataService = {
     // Validate table/view name to prevent SQL injection
     if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(tableName)) {
       throw fromCode('VALIDATION_ERROR', ['Invalid table or view name format']);
+    }
+
+    // Get database name for cache key
+    const dbName = sequelize.config.database || 'unknown';
+    const cacheKey = cacheService.key('metadata', 'indexes', dbName, tableName);
+    
+    // Try cache first
+    const cached = await cacheService.get(cacheKey);
+    if (cached) {
+      return cached;
     }
 
     try {
@@ -234,6 +276,9 @@ const dbMetadataService = {
         }
       });
 
+      // Cache results (30 minutes TTL)
+      await cacheService.set(cacheKey, indexMap, CACHE.METADATA_TTL);
+      
       return indexMap;
     } catch (error) {
       if (error.code) throw error;
@@ -259,6 +304,16 @@ const dbMetadataService = {
     // Validate procedure name to prevent SQL injection
     if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(procedureName)) {
       throw fromCode('VALIDATION_ERROR', ['Invalid procedure name format']);
+    }
+
+    // Get database name for cache key
+    const dbName = sequelize.config.database || 'unknown';
+    const cacheKey = cacheService.key('metadata', 'params', dbName, procedureName);
+    
+    // Try cache first
+    const cached = await cacheService.get(cacheKey);
+    if (cached) {
+      return cached;
     }
 
     try {
@@ -323,6 +378,11 @@ const dbMetadataService = {
           mode: param.mode || 'IN'
         };
       });
+      
+      // Cache results (30 minutes TTL)
+      await cacheService.set(cacheKey, params, CACHE.METADATA_TTL);
+      
+      return params;
     } catch (error) {
       if (error.code) throw error;
       throw mapDbError(error);
@@ -356,6 +416,16 @@ const dbMetadataService = {
       return null;
     }
 
+    // Get database name for cache key
+    const dbName = sequelize.config.database || 'unknown';
+    const cacheKey = cacheService.key('metadata', 'rowcount', dbName, tableName);
+    
+    // Try cache first
+    const cached = await cacheService.get(cacheKey);
+    if (cached !== null) {
+      return cached;
+    }
+
     try {
       const dialect = sequelize.getDialect();
       let query;
@@ -386,11 +456,15 @@ const dbMetadataService = {
         replacements: { tableName }
       });
 
+      let rowCount = null;
       if (Array.isArray(results) && results.length > 0 && results[0].row_count !== null) {
-        return parseInt(results[0].row_count, 10) || 0;
+        rowCount = parseInt(results[0].row_count, 10) || 0;
       }
-
-      return null; // Not available
+      
+      // Cache results (30 minutes TTL, even if null)
+      await cacheService.set(cacheKey, rowCount, CACHE.METADATA_TTL);
+      
+      return rowCount;
     } catch (error) {
       if (error.code) throw error;
       throw mapDbError(error);

@@ -12,14 +12,14 @@ function getClickHouseClient() {
     return clickhouseClient;
   }
 
-  const host = process.env.CLICKHOUSE_HOST || 'http://localhost:8123';
+  const url = process.env.CLICKHOUSE_URL || 'http://localhost:8123';
   const database = process.env.CLICKHOUSE_DATABASE || 'analytics';
   const username = process.env.CLICKHOUSE_USER || 'admin';
   const password = process.env.CLICKHOUSE_PASSWORD || 'admin123';
 
   try {
     clickhouseClient = createClient({
-      url: host, // Use url instead of deprecated host
+      url: url, // Use url instead of deprecated url
       database: database,
       username: username,
       password: password,
@@ -32,7 +32,7 @@ function getClickHouseClient() {
       }
     });
 
-    logger.info('ClickHouse client initialized', { host, database });
+    logger.info('ClickHouse client initialized', { url, database });
     return clickhouseClient;
   } catch (error) {
     logger.error('Failed to initialize ClickHouse client:', error);
