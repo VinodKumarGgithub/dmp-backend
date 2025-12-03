@@ -117,7 +117,7 @@ const tenantService = {
       
       // Clear tenant cache since credentials or status may have changed
       const { clearTenantCache } = require('../config/tenantDbManager');
-      clearTenantCache(tenantId);
+      await clearTenantCache(tenantId);
       
       // Security: Remove password from response
       const tenantResponse = updatedTenant.toJSON ? updatedTenant.toJSON() : updatedTenant;
@@ -146,7 +146,7 @@ const tenantService = {
       
       // Clear tenant cache since tenant is deleted
       const { clearTenantCache } = require('../config/tenantDbManager');
-      clearTenantCache(tenantId);
+      await clearTenantCache(tenantId);
       
       return { message: 'Tenant deleted successfully' };
     } catch (error) {

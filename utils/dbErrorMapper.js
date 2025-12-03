@@ -47,11 +47,11 @@ function mapDbError(error) {
   if (name === 'SequelizeDatabaseError') {
     const lower = (message || '').toLowerCase();
 
-    if (lower.includes('unknown column') || lower.includes("doesn't exist") && lower.includes('column')) {
+    if ((lower.includes('unknown column') || lower.includes("doesn't exist")) && lower.includes('column')) {
       return attachContext(fromCode('DB_UNKNOWN_COLUMN'));
     }
 
-    if (lower.includes('unknown table') || lower.includes("doesn't exist") && lower.includes('table')) {
+    if ((lower.includes('unknown table') || lower.includes("doesn't exist")) && lower.includes('table')) {
       return attachContext(fromCode('DB_UNKNOWN_TABLE'));
     }
 

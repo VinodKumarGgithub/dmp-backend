@@ -7,16 +7,20 @@ const dbMetadataService = {
   /**
    * Get list of tables, views, and procedures from tenant database
    * @param {Object} sequelize - Sequelize instance for tenant database
+   * @param {string} tenantId - Tenant ID for cache key isolation
    * @returns {Promise<Array>} Array of objects with name and type { name, type }
    */
-  async getTables(sequelize) {
+  async getTables(sequelize, tenantId) {
     if (!sequelize) {
       throw fromCode('TENANT_DB_NOT_AVAILABLE', ['Database connection not available']);
     }
 
-    // Get database name for cache key
-    const dbName = sequelize.config.database || 'unknown';
-    const cacheKey = cacheService.key('metadata', 'tables', dbName);
+    if (!tenantId) {
+      throw fromCode('VALIDATION_ERROR', ['Tenant ID is required for metadata cache']);
+    }
+
+    // Use tenantId for cache key instead of dbName for tenant isolation
+    const cacheKey = cacheService.key('metadata', 'tables', tenantId);
     
     // Try cache first
     const cached = await cacheService.get(cacheKey);
@@ -81,7 +85,7 @@ const dbMetadataService = {
           ORDER BY name
         `;
       } else {
-        throw fromCode('UNSUPPORTED_DIALECT', [`Unsupported database dialect: ${dialect}`]);
+        throw fromCode('UNSUPPORTED_DIALECT');
       }
 
       const results = await sequelize.query(query, {
@@ -108,11 +112,16 @@ const dbMetadataService = {
    * Get columns from a specific table or view
    * @param {Object} sequelize - Sequelize instance for tenant database
    * @param {string} tableName - Name of the table or view
+   * @param {string} tenantId - Tenant ID for cache key isolation
    * @returns {Promise<Array>} Array of column information
    */
-  async getTableColumns(sequelize, tableName) {
+  async getTableColumns(sequelize, tableName, tenantId) {
     if (!sequelize) {
       throw fromCode('TENANT_DB_NOT_AVAILABLE', ['Database connection not available']);
+    }
+
+    if (!tenantId) {
+      throw fromCode('VALIDATION_ERROR', ['Tenant ID is required for metadata cache']);
     }
 
     if (!tableName || typeof tableName !== 'string') {
@@ -124,9 +133,8 @@ const dbMetadataService = {
       throw fromCode('VALIDATION_ERROR', ['Invalid table or view name format']);
     }
 
-    // Get database name for cache key
-    const dbName = sequelize.config.database || 'unknown';
-    const cacheKey = cacheService.key('metadata', 'columns', dbName, tableName);
+    // Use tenantId for cache key instead of dbName
+    const cacheKey = cacheService.key('metadata', 'columns', tenantId, tableName);
     
     // Try cache first
     const cached = await cacheService.get(cacheKey);
@@ -164,7 +172,7 @@ const dbMetadataService = {
           ORDER BY ORDINAL_POSITION
         `;
       } else {
-        throw fromCode('UNSUPPORTED_DIALECT', [`Unsupported database dialect: ${dialect}`]);
+        throw fromCode('UNSUPPORTED_DIALECT');
       }
 
       const results = await sequelize.query(query, {
@@ -195,11 +203,16 @@ const dbMetadataService = {
    * Note: Views typically don't have indexes, but this method works for tables
    * @param {Object} sequelize - Sequelize instance for tenant database
    * @param {string} tableName - Name of the table or view
+   * @param {string} tenantId - Tenant ID for cache key isolation
    * @returns {Promise<Object>} Object mapping column names to index information
    */
-  async getTableIndexes(sequelize, tableName) {
+  async getTableIndexes(sequelize, tableName, tenantId) {
     if (!sequelize) {
       throw fromCode('TENANT_DB_NOT_AVAILABLE', ['Database connection not available']);
+    }
+
+    if (!tenantId) {
+      throw fromCode('VALIDATION_ERROR', ['Tenant ID is required for metadata cache']);
     }
 
     if (!tableName || typeof tableName !== 'string') {
@@ -211,9 +224,8 @@ const dbMetadataService = {
       throw fromCode('VALIDATION_ERROR', ['Invalid table or view name format']);
     }
 
-    // Get database name for cache key
-    const dbName = sequelize.config.database || 'unknown';
-    const cacheKey = cacheService.key('metadata', 'indexes', dbName, tableName);
+    // Use tenantId for cache key instead of dbName
+    const cacheKey = cacheService.key('metadata', 'indexes', tenantId, tableName);
     
     // Try cache first
     const cached = await cacheService.get(cacheKey);
@@ -255,7 +267,7 @@ const dbMetadataService = {
           ORDER BY c.COLUMN_NAME, ic.key_ordinal
         `;
       } else {
-        throw fromCode('UNSUPPORTED_DIALECT', [`Unsupported database dialect: ${dialect}`]);
+        throw fromCode('UNSUPPORTED_DIALECT');
       }
 
       const results = await sequelize.query(query, {
@@ -290,11 +302,16 @@ const dbMetadataService = {
    * Get parameters for a stored procedure
    * @param {Object} sequelize - Sequelize instance for tenant database
    * @param {string} procedureName - Name of the stored procedure
+   * @param {string} tenantId - Tenant ID for cache key isolation
    * @returns {Promise<Array>} Array of parameter information { name, type, nullable, default_value }
    */
-  async getProcedureParameters(sequelize, procedureName) {
+  async getProcedureParameters(sequelize, procedureName, tenantId) {
     if (!sequelize) {
       throw fromCode('TENANT_DB_NOT_AVAILABLE', ['Database connection not available']);
+    }
+
+    if (!tenantId) {
+      throw fromCode('VALIDATION_ERROR', ['Tenant ID is required for metadata cache']);
     }
 
     if (!procedureName || typeof procedureName !== 'string') {
@@ -306,9 +323,8 @@ const dbMetadataService = {
       throw fromCode('VALIDATION_ERROR', ['Invalid procedure name format']);
     }
 
-    // Get database name for cache key
-    const dbName = sequelize.config.database || 'unknown';
-    const cacheKey = cacheService.key('metadata', 'params', dbName, procedureName);
+    // Use tenantId for cache key instead of dbName
+    const cacheKey = cacheService.key('metadata', 'params', tenantId, procedureName);
     
     // Try cache first
     const cached = await cacheService.get(cacheKey);
@@ -354,7 +370,7 @@ const dbMetadataService = {
           ORDER BY p.parameter_id
         `;
       } else {
-        throw fromCode('UNSUPPORTED_DIALECT', [`Unsupported database dialect: ${dialect}`]);
+        throw fromCode('UNSUPPORTED_DIALECT');
       }
 
       const results = await sequelize.query(query, {
@@ -362,7 +378,7 @@ const dbMetadataService = {
         replacements: { procedureName }
       });
 
-      return results.map(param => {
+      const params = results.map(param => {
         // For MySQL, IS_NULLABLE doesn't exist in PARAMETERS table
         // We can infer nullability: if default_value is NULL, parameter is likely nullable
         // For SQL Server, we have is_nullable directly
@@ -395,11 +411,16 @@ const dbMetadataService = {
    * @param {Object} sequelize - Sequelize instance for tenant database
    * @param {string} tableName - Name of the table or view
    * @param {string} sourceType - Type of source: 'TABLE', 'VIEW', or 'PROCEDURE'
+   * @param {string} tenantId - Tenant ID for cache key isolation
    * @returns {Promise<number|null>} Approximate row count or null if not available
    */
-  async getTableRowCount(sequelize, tableName, sourceType = 'TABLE') {
+  async getTableRowCount(sequelize, tableName, sourceType = 'TABLE', tenantId) {
     if (!sequelize) {
       throw fromCode('TENANT_DB_NOT_AVAILABLE', ['Database connection not available']);
+    }
+
+    if (!tenantId) {
+      throw fromCode('VALIDATION_ERROR', ['Tenant ID is required for metadata cache']);
     }
 
     if (!tableName || typeof tableName !== 'string') {
@@ -416,9 +437,8 @@ const dbMetadataService = {
       return null;
     }
 
-    // Get database name for cache key
-    const dbName = sequelize.config.database || 'unknown';
-    const cacheKey = cacheService.key('metadata', 'rowcount', dbName, tableName);
+    // Use tenantId for cache key instead of dbName
+    const cacheKey = cacheService.key('metadata', 'rowcount', tenantId, tableName);
     
     // Try cache first
     const cached = await cacheService.get(cacheKey);
@@ -448,7 +468,7 @@ const dbMetadataService = {
           GROUP BY t.name
         `;
       } else {
-        throw fromCode('UNSUPPORTED_DIALECT', [`Unsupported database dialect: ${dialect}`]);
+        throw fromCode('UNSUPPORTED_DIALECT');
       }
 
       const results = await sequelize.query(query, {
@@ -500,6 +520,37 @@ const dbMetadataService = {
     
     // Default to string
     return 'string';
+  },
+
+  /**
+   * Clear metadata cache for a specific tenant
+   * @param {string} tenantId - Tenant ID
+   * @returns {Promise<number>} Number of keys deleted
+   */
+  async clearMetadataCache(tenantId) {
+    if (!tenantId || typeof tenantId !== 'string') {
+      return 0;
+    }
+
+    const { cacheService } = require('./cacheService');
+    
+    // Use exact patterns to clear all metadata for this specific tenant
+    // Pattern format: metadata:{type}:{tenantId}:{optionalTableName}
+    const patterns = [
+      `metadata:tables:${tenantId}`,                    // Exact match for tables
+      `metadata:columns:${tenantId}:*`,                // All columns for this tenant
+      `metadata:indexes:${tenantId}:*`,                // All indexes for this tenant
+      `metadata:params:${tenantId}:*`,                  // All procedure params for this tenant
+      `metadata:rowcount:${tenantId}:*`                // All row counts for this tenant
+    ];
+
+    let deletedCount = 0;
+    for (const pattern of patterns) {
+      const count = await cacheService.delPattern(pattern);
+      deletedCount += count;
+    }
+
+    return deletedCount;
   }
 };
 

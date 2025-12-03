@@ -37,21 +37,17 @@ class TenantValidationService {
     
     // Check if dialect is supported
     if (!dialect) {
-      throw fromCode('VALIDATION_ERROR', ['Database dialect is required']);
+      throw fromCode('DB_INVALID_CONFIG', ['Database dialect is required']);
     }
     
     if (!this.isSupported(dialect)) {
-      const available = this.getSupportedDialects().join(', ');
-      throw fromCode('UNSUPPORTED_DIALECT', [
-        `Database dialect '${dialect}' is not supported. ` +
-        `Supported dialects: ${available}`
-      ]);
+      throw fromCode('UNSUPPORTED_DIALECT');
     }
     
     // Validate connection method
     if (connection_type === 'connection_string') {
       if (!tenant.connection_string) {
-        throw fromCode('VALIDATION_ERROR', [
+        throw fromCode('DB_INVALID_CONFIG', [
           'connection_string is required when connection_type is "connection_string"'
         ]);
       }
@@ -65,7 +61,7 @@ class TenantValidationService {
         this.validateNoSQLConnection(tenant, dialect);
       }
     } else if (connection_type && connection_type !== 'connection_options') {
-      throw fromCode('VALIDATION_ERROR', [
+      throw fromCode('DB_INVALID_CONFIG', [
         `Invalid connection_type: ${connection_type}. Must be 'direct', 'connection_string', or 'connection_options'`
       ]);
     }
@@ -84,14 +80,14 @@ class TenantValidationService {
     const missing = required.filter(field => !tenant[field]);
     
     if (missing.length > 0) {
-      throw fromCode('VALIDATION_ERROR', [
+      throw fromCode('DB_INVALID_CONFIG', [
         `Missing required fields for SQL database: ${missing.join(', ')}`
       ]);
     }
     
     // Validate port is a number
     if (tenant.db_port && (isNaN(tenant.db_port) || tenant.db_port < 1 || tenant.db_port > 65535)) {
-      throw fromCode('VALIDATION_ERROR', [
+      throw fromCode('DB_INVALID_CONFIG', [
         'db_port must be a number between 1 and 65535'
       ]);
     }
@@ -104,7 +100,7 @@ class TenantValidationService {
     // MongoDB requires host, port, db_name
     if (dialect === 'mongodb') {
       if (!tenant.db_host || !tenant.db_name) {
-        throw fromCode('VALIDATION_ERROR', [
+        throw fromCode('DB_INVALID_CONFIG', [
           'MongoDB requires db_host and db_name for direct connections'
         ]);
       }
@@ -118,21 +114,21 @@ class TenantValidationService {
    */
   static validateConnectionOptions(dialect, options) {
     if (typeof options !== 'object' || Array.isArray(options)) {
-      throw fromCode('VALIDATION_ERROR', [
+      throw fromCode('DB_INVALID_CONFIG', [
         'connection_options must be a JSON object'
       ]);
     }
     
     // Validate SSL options if provided
     if (options.ssl && typeof options.ssl !== 'object') {
-      throw fromCode('VALIDATION_ERROR', [
+      throw fromCode('DB_INVALID_CONFIG', [
         'connection_options.ssl must be an object'
       ]);
     }
     
     // Validate pool options if provided
     if (options.pool && typeof options.pool !== 'object') {
-      throw fromCode('VALIDATION_ERROR', [
+      throw fromCode('DB_INVALID_CONFIG', [
         'connection_options.pool must be an object'
       ]);
     }

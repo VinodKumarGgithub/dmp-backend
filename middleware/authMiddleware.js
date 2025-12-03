@@ -7,7 +7,18 @@ async function authMiddleware(req, res, next) {
   const token = header.startsWith('Bearer ') ? header.slice(7) : null;
   if (!token) return next(fromCode('UNAUTHORIZED'));
   try {
-    const payload = jwt.verify(token, process.env.JWT_SECRET || 'changeme');
+    // Security: JWT_SECRET must be set in production
+    const jwtSecret = process.env.JWT_SECRET;
+    if (!jwtSecret || jwtSecret === 'changeme') {
+      if (process.env.NODE_ENV === 'production') {
+        return next(fromCode('INTERNAL_ERROR', [
+          'Authentication service is not properly configured. Please contact your system administrator.'
+        ]));
+      }
+      // Allow 'changeme' only in development
+      console.warn('⚠️  WARNING: Using default authentication secret. This is insecure and should only be used in development.');
+    }
+    const payload = jwt.verify(token, jwtSecret || 'changeme');
     
     // Fetch user from DB to verify status and get latest role/organization
     const user = await AdminUser.findOne({ where: { username: payload.username } });

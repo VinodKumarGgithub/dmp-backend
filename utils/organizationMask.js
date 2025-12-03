@@ -11,11 +11,24 @@ function generateMaskedOrgId(organizationId) {
   if (!organizationId) return null;
   
   // Use dedicated secret or fallback to JWT_SECRET
-  const secret = process.env.ORG_MASK_SECRET || process.env.JWT_SECRET || 'changeme';
+  // Security: Warn if using default in production
+  const jwtSecret = process.env.JWT_SECRET;
+  const orgMaskSecret = process.env.ORG_MASK_SECRET;
+  const secret = orgMaskSecret || jwtSecret;
+  
+  if (!secret || secret === 'changeme') {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('System configuration error. Please contact your system administrator.');
+    }
+    // Allow 'changeme' only in development
+    console.warn('⚠️  WARNING: Using default security configuration. This is insecure and should only be used in development.');
+  }
+  
+  const finalSecret = secret || 'changeme';
   
   // Create a consistent hash that can't be reversed
   const hash = crypto
-    .createHmac('sha256', secret)
+    .createHmac('sha256', finalSecret)
     .update(String(organizationId))
     .digest('hex')
     .substring(0, 16); // Use first 16 chars for shorter ID

@@ -17,6 +17,15 @@ function getClickHouseClient() {
   const username = process.env.CLICKHOUSE_USER || 'admin';
   const password = process.env.CLICKHOUSE_PASSWORD || 'admin123';
 
+  // Security: Warn if using default credentials in production
+  if (process.env.NODE_ENV === 'production') {
+    if (!process.env.CLICKHOUSE_USER || !process.env.CLICKHOUSE_PASSWORD) {
+      logger.warn('⚠️  WARNING: Analytics service credentials not configured. Using default credentials is insecure in production.');
+    } else if (username === 'admin' && password === 'admin123') {
+      logger.warn('⚠️  WARNING: Analytics service is using default credentials. This is insecure in production.');
+    }
+  }
+
   try {
     clickhouseClient = createClient({
       url: url, // Use url instead of deprecated url
@@ -32,7 +41,11 @@ function getClickHouseClient() {
       }
     });
 
-    logger.info('ClickHouse client initialized', { url, database });
+    // Log initialization without exposing credentials
+    logger.info('Analytics service client initialized', { 
+      url: url.replace(/\/\/[^:]+:[^@]+@/, '//***:***@'), // Mask credentials in URL
+      database 
+    });
     return clickhouseClient;
   } catch (error) {
     logger.error('Failed to initialize ClickHouse client:', error);

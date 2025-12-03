@@ -109,7 +109,7 @@ function parseJsonField(text, fallback) {
   try {
     return JSON.parse(text);
   } catch (e) {
-    throw fromCode('PAGE_CONFIG_INVALID', [`Invalid JSON in page configuration: ${e.message}`]);
+    throw fromCode('PAGE_CONFIG_INVALID', ['Invalid JSON in page configuration. Please check your page settings.']);
   }
 }
 
@@ -1761,9 +1761,13 @@ const pageService = {
    * with performance feedback based on table metadata
    * Enhanced version for CUSTOM_QUERY that analyzes table structure
    */
-  async detectColumnsWithMetadata(customQuery, sequelize) {
+  async detectColumnsWithMetadata(customQuery, sequelize, tenantId) {
     if (!sequelize) {
       throw fromCode('TENANT_DB_NOT_AVAILABLE');
+    }
+
+    if (!tenantId) {
+      throw fromCode('VALIDATION_ERROR', ['Tenant ID is required for metadata cache']);
     }
 
     // Step 1: Detect columns from query result (existing logic)
@@ -1781,10 +1785,10 @@ const pageService = {
       for (const { tableName } of tables) {
         try {
           // Get columns
-          const tableColumns = await dbMetadataService.getTableColumns(sequelize, tableName);
+          const tableColumns = await dbMetadataService.getTableColumns(sequelize, tableName, tenantId);
           
           // Get indexes
-          const tableIndexes = await dbMetadataService.getTableIndexes(sequelize, tableName);
+          const tableIndexes = await dbMetadataService.getTableIndexes(sequelize, tableName, tenantId);
           
           tableMetadata[tableName] = {
             columns: tableColumns,
@@ -2168,7 +2172,7 @@ const pageService = {
           }).join(', ');
           procedureCall = `EXEC ${escapedProcedureName} ${paramList}`;
         } else {
-          throw fromCode('UNSUPPORTED_DIALECT', [`Unsupported database dialect: ${dialect}`]);
+          throw fromCode('UNSUPPORTED_DIALECT');
         }
 
         // Execute procedure
@@ -2529,7 +2533,8 @@ const pageService = {
           const metadataCount = await dbMetadataService.getTableRowCount(
             tenantSequelize,
             queryDataSource,
-            source_type
+            source_type,
+            reqDb.tenantId
           );
           if (metadataCount !== null) {
             total = metadataCount;
@@ -2719,7 +2724,7 @@ const pageService = {
           }).join(', ');
           procedureCall = `EXEC ${escapedProcedureName} ${paramList}`;
         } else {
-          throw fromCode('UNSUPPORTED_DIALECT', [`Unsupported database dialect: ${dialect}`]);
+          throw fromCode('UNSUPPORTED_DIALECT');
         }
 
         // Execute procedure
@@ -3013,7 +3018,7 @@ const pageService = {
       if (errorMessage.includes("syntax") || 
           errorMessage.includes("SQL syntax") ||
           error.name === 'SequelizeDatabaseError') {
-        throw fromCode('PAGE_QUERY_ERROR', [`Query execution failed: ${errorMessage}`]);
+        throw fromCode('PAGE_QUERY_ERROR');
       }
 
       // Map other DB errors

@@ -9,7 +9,7 @@ async function login(req, res, next) {
   try {
     const { username, password } = req.body || {};
     if (!username || !password) {
-      return next(fromCode("INVALID_CREDS"));
+      return next(fromCode("CREDS_REQUIRED"));
     }
 
     const user = await AdminUser.findOne({ where: { username } });
@@ -29,6 +29,18 @@ async function login(req, res, next) {
       return next(fromCode("INVALID_CREDS"));
     }
 
+    // Security: JWT_SECRET must be set in production
+    const jwtSecret = process.env.JWT_SECRET;
+    if (!jwtSecret || jwtSecret === 'changeme') {
+      if (process.env.NODE_ENV === 'production') {
+        return next(fromCode('INTERNAL_ERROR', [
+          'Authentication service is not properly configured. Please contact your system administrator.'
+        ]));
+      }
+      // Allow 'changeme' only in development
+      console.warn('⚠️  WARNING: Using default authentication secret. This is insecure and should only be used in development.');
+    }
+
     const token = jwt.sign(
       { 
         username: user.username, 
@@ -40,7 +52,7 @@ async function login(req, res, next) {
         phone_number: user.phone_number,
         profile_picture: user.profile_picture
       },
-      process.env.JWT_SECRET || 'changeme',
+      jwtSecret || 'changeme',
       { expiresIn: '12h' }
     );
 

@@ -17,8 +17,8 @@ const ERROR_CATALOG = {
   // Tenant Related
   TENANT_NOT_FOUND: { message: 'The specified tenant was not found.', status: 404 },
   TENANT_DB_NOT_AVAILABLE: { message: 'The database for this tenant is currently unavailable. Please try again later or contact support.', status: 502 },
-  TENANT_INACTIVE: { message: 'This tenant is currently INACTIVE. Please activate the tenant to connect to its database.', status: 403 },
-  TENANT_SUSPENDED: { message: 'This tenant is currently SUSPENDED. Database access is temporarily disabled. Please contact support if you need access.', status: 403 },
+  TENANT_INACTIVE: { message: 'This tenant is currently inactive. Please activate the tenant to connect to its database.', status: 403 },
+  TENANT_SUSPENDED: { message: 'This tenant is currently suspended. Database access is temporarily disabled. Please contact support if you need access.', status: 403 },
   
   // Database Connection & Configuration
   DB_CONNECTION_FAILED: { message: 'Unable to connect to the database. This may be a temporary issue. Please try again in a few moments.', status: 502 },
@@ -33,6 +33,7 @@ const ERROR_CATALOG = {
   DB_UNKNOWN_COLUMN: { message: 'A column referenced in the query does not exist. Please check your page configuration.', status: 400 },
   DB_UNKNOWN_TABLE: { message: 'A table or view referenced in the query does not exist. Please check your page configuration.', status: 400 },
   DB_QUERY_ERROR: { message: 'An error occurred while retrieving the data. Please try again or contact support if the problem persists.', status: 400 },
+  DB_ERROR: { message: 'A database error occurred. Please try again or contact support if the problem persists.', status: 500 },
   
   // Page Related
   PAGE_NOT_FOUND: { message: 'The requested page was not found.', status: 404 },

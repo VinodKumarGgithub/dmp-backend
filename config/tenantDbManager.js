@@ -71,15 +71,15 @@ async function getTenantConfig(tenantId) {
   
   // Check tenant status
   if (tenant.status === 'INACTIVE') {
-    throw fromCode('TENANT_INACTIVE', [`Tenant ${tenantId} is INACTIVE`]);
+    throw fromCode('TENANT_INACTIVE');
   }
   
   if (tenant.status === 'SUSPENDED') {
-    throw fromCode('TENANT_SUSPENDED', [`Tenant ${tenantId} is SUSPENDED`]);
+    throw fromCode('TENANT_SUSPENDED');
   }
   
   if (tenant.status !== 'ACTIVE') {
-    throw fromCode('TENANT_DB_NOT_AVAILABLE', [`Tenant ${tenantId} status is ${tenant.status}`]);
+    throw fromCode('TENANT_DB_NOT_AVAILABLE');
   }
   
   // Build config object (password is already decrypted by model hook)
@@ -152,9 +152,15 @@ async function getTenantSequelize(tenantId) {
     await sequelize.authenticate();
     logger.info(`Connection established for Tenant ${tenantId}`);
   } catch (error) {
+    // Close connection before throwing to prevent connection leak
+    // Ignore close errors - connection might already be closed or invalid
+    await sequelize.close().catch(() => {
+      // Connection might already be closed or invalid, ignore errors
+    });
+    
     // Clear cache on connection failure
     await clearTenantCache(tenantId);
-    throw fromCode('DB_CONNECTION_FAILED', [`Unable to connect to tenant ${tenantId}: ${error.message}`]);
+    throw fromCode('DB_CONNECTION_FAILED');
   }
   
   // Cache connection in memory (per process)
@@ -200,6 +206,20 @@ async function clearTenantCache(tenantId) {
   }
   
   tenantCache.delete(`config:${tenantId}`);
+  
+  // Clear metadata cache for this specific tenant
+  // Now we use tenantId directly - much simpler and ensures tenant isolation
+  try {
+    const { dbMetadataService } = require('../services/dbMetadataService');
+    const deletedCount = await dbMetadataService.clearMetadataCache(tenantId);
+    if (deletedCount > 0) {
+      logger.debug(`Cleared ${deletedCount} metadata cache entries for tenant: ${tenantId}`);
+    }
+  } catch (error) {
+    // Non-critical - log but don't fail
+    logger.warn(`Failed to clear metadata cache for tenant ${tenantId}:`, error.message);
+  }
+  
   logger.info(`Tenant cache cleared for ${tenantId}`);
 }
 

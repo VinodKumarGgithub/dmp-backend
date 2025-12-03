@@ -3,12 +3,18 @@ const { logger } = require('./logger');
 const { DB_POOL } = require('./constants');
 
 function createSequelize(url) {
+  // Security: Only disable SSL certificate validation in development
+  // In production, SSL certificates must be properly validated
+  const isDevelopment = process.env.NODE_ENV !== 'production';
+  
   const sequelize = new Sequelize(url, {
     logging: false,
     dialectOptions: {
       ssl: {
         require: true,
-        rejectUnauthorized: false
+        // Only allow self-signed certificates in development
+        // Production must use valid SSL certificates
+        rejectUnauthorized: !isDevelopment
       },
       // Connection pool optimizations
       connectTimeout: 10000, // 10 seconds

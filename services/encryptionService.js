@@ -22,10 +22,10 @@ class EncryptionService {
     if (!key) {
       // In development, warn but don't fail (for testing)
       if (process.env.NODE_ENV === 'development') {
-        logger.warn('TENANT_CREDENTIALS_ENCRYPTION_KEY not set. Encryption disabled.');
+        logger.warn('⚠️  WARNING: Encryption key not configured. Tenant credentials encryption is disabled.');
         return null;
       }
-      throw new Error('TENANT_CREDENTIALS_ENCRYPTION_KEY environment variable is required');
+      throw new Error('System encryption is not properly configured. Please contact your system administrator.');
     }
     // Hash to ensure 32-byte key for AES-256
     return crypto.createHash('sha256').update(key).digest();

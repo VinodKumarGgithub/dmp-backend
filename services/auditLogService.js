@@ -136,7 +136,7 @@ async function listAuditLogs(filters = {}, userOrganizationId = null, userRole =
       pageSize: limit
     };
   } catch (error) {
-    throw fromCode('DB_ERROR', [`Failed to fetch audit logs: ${error.message}`]);
+    throw fromCode('DB_ERROR');
   }
 }
 
@@ -188,7 +188,7 @@ async function getAuditLogById(logId, userOrganizationId = null, userRole = null
     return log.toJSON();
   } catch (error) {
     if (error.code) throw error;
-    throw fromCode('DB_ERROR', [`Failed to fetch audit log: ${error.message}`]);
+    throw fromCode('DB_ERROR');
   }
 }
 

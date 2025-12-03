@@ -206,7 +206,10 @@ module.exports = {
       if (!req.db || !req.db.sequelize) {
         return next(fromCode('TENANT_DB_NOT_AVAILABLE'));
       }
-      const dataSources = await dbMetadataService.getTables(req.db.sequelize);
+      if (!req.db.tenantId) {
+        return next(fromCode('VALIDATION_ERROR', ['Tenant ID is required']));
+      }
+      const dataSources = await dbMetadataService.getTables(req.db.sequelize, req.db.tenantId);
       res.json(success(dataSources, 'Tables, views, and procedures fetched successfully'));
     } catch (err) {
       next(err);
@@ -219,8 +222,11 @@ module.exports = {
       if (!req.db || !req.db.sequelize) {
         return next(fromCode('TENANT_DB_NOT_AVAILABLE'));
       }
+      if (!req.db.tenantId) {
+        return next(fromCode('VALIDATION_ERROR', ['Tenant ID is required']));
+      }
       const { tableName } = req.params;
-      const columns = await dbMetadataService.getTableColumns(req.db.sequelize, tableName);
+      const columns = await dbMetadataService.getTableColumns(req.db.sequelize, tableName, req.db.tenantId);
       res.json(success(columns, 'Table or view columns fetched successfully'));
     } catch (err) {
       next(err);
@@ -233,8 +239,11 @@ module.exports = {
       if (!req.db || !req.db.sequelize) {
         return next(fromCode('TENANT_DB_NOT_AVAILABLE'));
       }
+      if (!req.db.tenantId) {
+        return next(fromCode('VALIDATION_ERROR', ['Tenant ID is required']));
+      }
       const { tableName } = req.params;
-      const indexes = await dbMetadataService.getTableIndexes(req.db.sequelize, tableName);
+      const indexes = await dbMetadataService.getTableIndexes(req.db.sequelize, tableName, req.db.tenantId);
       res.json(success(indexes, 'Table indexes fetched successfully'));
     } catch (err) {
       next(err);
@@ -247,8 +256,11 @@ module.exports = {
       if (!req.db || !req.db.sequelize) {
         return next(fromCode('TENANT_DB_NOT_AVAILABLE'));
       }
+      if (!req.db.tenantId) {
+        return next(fromCode('VALIDATION_ERROR', ['Tenant ID is required']));
+      }
       const { procedureName } = req.params;
-      const parameters = await dbMetadataService.getProcedureParameters(req.db.sequelize, procedureName);
+      const parameters = await dbMetadataService.getProcedureParameters(req.db.sequelize, procedureName, req.db.tenantId);
       res.json(success(parameters, 'Procedure parameters fetched successfully'));
     } catch (err) {
       next(err);
@@ -290,7 +302,10 @@ module.exports = {
         return next(fromCode('PAGE_CONFIG_INVALID', ['custom_query is required']));
       }
 
-      const result = await pageService.detectColumnsWithMetadata(trimmedSql, req.db.sequelize);
+      if (!req.db.tenantId) {
+        return next(fromCode('VALIDATION_ERROR', ['Tenant ID is required']));
+      }
+      const result = await pageService.detectColumnsWithMetadata(trimmedSql, req.db.sequelize, req.db.tenantId);
       res.json(success(result, 'Columns and recommendations detected successfully'));
     } catch (err) {
       next(err);
