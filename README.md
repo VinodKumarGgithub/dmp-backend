@@ -23,7 +23,7 @@ This HTML interface provides a modern, user-friendly way to manage tenants and t
 
 ### 1. **Start the Server**
 ```bash
-cd mbx-pbm
+cd dmp-backend
 npm start
 ```
 

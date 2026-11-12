@@ -1,7 +1,6 @@
 # Use Node.js 20 official image
 FROM node:20-alpine
 
-
 # Set working directory
 WORKDIR /DATAMANAGEMENT
 
